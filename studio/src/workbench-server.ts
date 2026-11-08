@@ -197,8 +197,13 @@ export class WorkbenchServer {
       const jobMatch = req.url?.match(/^\/jobs\/([0-9a-f-]{36})$/);
       if (req.method === "GET" && jobMatch) {this.send(res,200,await jobView(await this.host.store.load(jobMatch[1]),this.host));return;}
       if (req.method === "POST" && req.url === "/cancel") {
-        if (!this.active?.task.cancellable) {this.send(res,409,{error:"当前步骤需要等待完成"});return;}
-        this.active.controller.abort();this.send(res,200,{ok:true});return;
+        const { taskId } = await requestBody(req);
+        const active = this.active;
+        if (!active?.task.cancellable || (taskId !== undefined && taskId !== active.task.id)) {
+          this.send(res,409,{error:"当前没有可停止的对应任务"});return;
+        }
+        active.task.cancellable = false;
+        active.controller.abort();this.send(res,200,{ok:true});return;
       }
       if (req.method === "POST" && req.url === "/shutdown") {
         if (this.active || !this.onShutdown) {this.send(res,409,{error:"请等待当前任务完成后再停止 Host"});return;}
@@ -231,7 +236,8 @@ export class WorkbenchServer {
         if (action === "batch-plan") this.host.styles.dir(String(body.styleId));
         if (action === "batch-preview") this.host.batches.dir(String(body.batchId));
         const generates=["generate","refine","apply-style"].includes(action);
-        const task: Task = {id:randomUUID(),state:"running",stage:generates ? "capture" : action,cancellable:generates || action === "batch-plan"};
+        const task: Task = {id:randomUUID(),state:"running",stage:generates ? "capture" : action,
+          cancellable:generates || action === "capture" || action === "batch-plan" || action === "batch-preview"};
         const controller = new AbortController();
         this.tasks.set(task.id,task);
         const run = async () => {
@@ -240,17 +246,18 @@ export class WorkbenchServer {
               const publish = (batch: BatchView) => { task.batch = batch; };
               task.batch = batchPhotos
                 ? await this.host.batches.plan(String(body.styleId), batchPhotos, body.strength as number | undefined, controller.signal, publish)
-                : await this.host.batches.preview(String(body.batchId), publish);
+                : await this.host.batches.preview(String(body.batchId), publish, controller.signal);
               task.state = "completed";
               return;
             }
             let job: Job;
             if (action === "capture" || generates) {
-              if(action==="refine") job=await this.host.prepareRefinement(String(body.jobId),body.feedback as string,body.strength as number|undefined,body.localMasks===true);
-              else if(action==="apply-style") job=await this.host.captureStyle(String(body.styleId),body.photoId as string|undefined,body.strength as number|undefined,body.extra as string|undefined,undefined,body.localMasks===true);
-              else job = await this.host.capture(request ?? {mode:"lucky",prompt:"",strength:1},body.photoId as string|undefined);
+              if(action==="refine") job=await this.host.prepareRefinement(String(body.jobId),body.feedback as string,body.strength as number|undefined,body.localMasks===true,controller.signal);
+              else if(action==="apply-style") job=await this.host.captureStyle(String(body.styleId),body.photoId as string|undefined,body.strength as number|undefined,body.extra as string|undefined,undefined,body.localMasks===true,controller.signal);
+              else job = await this.host.capture(request ?? {mode:"lucky",prompt:"",strength:1},body.photoId as string|undefined,undefined,controller.signal);
               task.job = await jobView(job,this.host);
               if (generates) {
+                controller.signal.throwIfAborted();
                 task.stage = "generate";task.cancellable = true;
                 job = await this.host.plan(job.id,controller.signal);
               }
@@ -262,7 +269,7 @@ export class WorkbenchServer {
             }
             task.job = await jobView(job,this.host);task.state = "completed";
           } catch (error) {
-            task.error = controller.signal.aborted ? "生成已停止，可重新生成方案。" : String(error);
+            task.error = controller.signal.aborted ? (task.stage==="capture" ? "已停止读取照片。" : "生成已停止，可重新生成方案。") : String(error);
             if (task.job) {
               try {task.job = await jobView(await this.host.store.load(task.job.id),this.host);} catch { /* Keep the primary error if the journal is unavailable. */ }
             }

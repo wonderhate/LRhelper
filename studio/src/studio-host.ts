@@ -20,32 +20,42 @@ export class StudioHost {
     this.styles=new StyleLibrary(path.join(path.dirname(store.root),"styles"));
     this.batches = new BatchQueue(this);
   }
-  async capture(request: GradeRequest, photoId?: string|number, jobId?: string): Promise<Job> {
-    return this.captureJob(request,photoId,jobId);
+  async capture(request: GradeRequest, photoId?: string|number, jobId?: string, signal?: AbortSignal): Promise<Job> {
+    return this.captureJob(request,photoId,jobId,signal);
   }
-  private async captureJob(request: GradeRequest, photoId?: string|number, jobId: string = randomUUID(), referenceData?: Buffer): Promise<Job> {
+  private async captureJob(request: GradeRequest, photoId?: string|number, jobId: string = randomUUID(), signal?: AbortSignal, referenceData?: Buffer): Promise<Job> {
+    signal?.throwIfAborted();
     if(!["describe","reference","lucky"].includes(request.mode)) throw new Error("Unknown grading mode");
     if(request.mode!=="reference") request={...request,reference:undefined};
     if(!Number.isFinite(request.strength) || request.strength<0 || request.strength>1) throw new Error("Strength must be 0–1");
     if(request.mode==="describe" && !request.prompt.trim()) throw new Error("Describe mode needs a style description");
     if(request.mode==="reference" && !request.reference) throw new Error("Reference mode needs an image path");
-    const capabilities=await this.lr.discover();
-    const maskCapabilities=request.localMasks ? await this.requireMasks() : undefined;
-    const id=photoId ?? (await this.lr.selected())[0].id;
-    const source=await this.lr.metadata(id);
+    const capabilities=await this.lr.discover(signal);
+    signal?.throwIfAborted();
+    const maskCapabilities=request.localMasks ? await this.requireMasks(signal) : undefined;
+    const id=photoId ?? (await this.lr.selected(signal))[0].id;
+    signal?.throwIfAborted();
+    const source=await this.lr.metadata(id,signal);
     await available(source.path);
     const reference=request.reference ? referenceData ?? await readBoundedFile(request.reference,imageLimit,
       "Reference must be a JPEG, PNG or WebP image below 20 MB") : undefined;
     const referenceFile=reference ? `reference.${checkImage(reference)}` : undefined;
+    signal?.throwIfAborted();
     const job: Job={version:1,id:jobId,createdAt:new Date().toISOString(),status:"captured",request,source,sourceFingerprint:fingerprint(source),baseline:flatten(source.developSettings),capabilities,maskCapabilities};
     job.conversationId=job.id;job.revision=1;
     job.referenceFile=referenceFile;
     await this.store.create(job);
     try {
       if(reference && referenceFile) await this.store.file(job.id,referenceFile,reference);
-      await this.store.file(job.id,"before.jpg",await this.renderStable(source.id));
-      if(fingerprint(await this.lr.metadata(source.id))!==job.sourceFingerprint) throw new Error("Photo changed during capture; capture again");
-    } catch(error) {job.status="failed";job.error=String(error);await this.store.save(job);throw error;}
+      await this.store.file(job.id,"before.jpg",await this.renderStable(source.id,signal));
+      if(fingerprint(await this.lr.metadata(source.id,signal))!==job.sourceFingerprint) throw new Error("Photo changed during capture; capture again");
+      signal?.throwIfAborted();
+    } catch(error) {
+      job.status="failed";
+      job.error=signal?.aborted ? "已停止读取照片。" : String(error);
+      await this.store.save(job);
+      throw error;
+    }
     return job;
   }
   async chain(id: string): Promise<Job[]> {
@@ -75,22 +85,24 @@ export class StudioHost {
     }
     return {settings,masks,stepDiff,diff:Object.entries(settings).map(([key,after])=>({key,before:chain[0].baseline[key],after}))};
   }
-  async prepareRefinement(parentId: string, feedback: string, strength=1, localMasks?: boolean): Promise<Job> {
+  async prepareRefinement(parentId: string, feedback: string, strength=1, localMasks?: boolean, signal?: AbortSignal): Promise<Job> {
+    signal?.throwIfAborted();
     if(typeof feedback!=="string" || !feedback.trim() || feedback.length>8000) throw new Error("请填写 1–8000 字符的调整意见");
     if(!Number.isFinite(strength) || strength<0 || strength>1) throw new Error("强度必须在 0–1 之间");
     return this.store.lock(parentId,async()=>{
       const chain=await this.chain(parentId),parent=chain.at(-1)!;
       if(chain.length>=20) throw new Error("本会话已达 20 轮，请开始新会话");
       if(!await hasVerifiedPreview(parent,this.store.dir(parent.id))) throw new Error("请先完成上一轮预览，再继续调整");
-      const source=await this.lr.metadata(parent.source.id);
+      const source=await this.lr.metadata(parent.source.id,signal);
       this.verifyCatalog(parent,source);
       if(fingerprint(source)!==parent.sourceFingerprint) throw new Error("源照片已变更，请重新读取并开始新会话");
-      const capabilities=await this.lr.discover();
-      const maskCapabilities=localMasks ? await this.requireMasks() : undefined;
+      const capabilities=await this.lr.discover(signal);
+      const maskCapabilities=localMasks ? await this.requireMasks(signal) : undefined;
       this.mapChain(chain,allowedKeys(capabilities,parent.baseline));
       const original=await readLocalFile(this.store.dir(chain[0].id),"before.jpg",imageLimit,"原始预览不可用");
       const rendered=await readLocalFile(this.store.dir(parent.id),"after.jpg",imageLimit,"上一轮预览不可用");
       const reference=parent.referenceFile ? await readLocalFile(this.store.dir(parent.id),parent.referenceFile,imageLimit,"任务参考图无效") : undefined;
+      signal?.throwIfAborted();
       const job: Job={version:1,id:randomUUID(),createdAt:new Date().toISOString(),status:"captured",request:{...parent.request,prompt:feedback.trim(),strength,localMasks},source:parent.source,sourceFingerprint:parent.sourceFingerprint,baseline:parent.baseline,capabilities,maskCapabilities,parentJobId:parent.id,conversationId:chain[0].id,revision:chain.length+1,referenceFile:parent.referenceFile,styleId:parent.styleId,styleName:parent.styleName};
       await this.store.create(job);
       try {
@@ -121,12 +133,13 @@ export class StudioHost {
       return this.styles.save(chain.at(-1)!,chain,name,this.store);
     });
   }
-  async captureStyle(styleId: string, photoId?: string|number, strength?: number, extra="", jobId?: string, localMasks?: boolean) {
+  async captureStyle(styleId: string, photoId?: string|number, strength?: number, extra="", jobId?: string, localMasks?: boolean, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     if(typeof extra!=="string" || extra.length>8000) throw new Error("附加描述过长");
     const style=await this.styles.load(styleId);
     const reference=style.referenceFile ? path.join(this.styles.dir(style.id),style.referenceFile) : undefined;
     const referenceData=style.referenceFile ? await readLocalFile(this.styles.dir(style.id),style.referenceFile,imageLimit,"风格参考图无效") : undefined;
-    const job=await this.captureJob({mode:reference ? "reference" : "describe",reference,strength:strength ?? style.strength,localMasks,prompt:`风格名称：${style.name}\n以下是风格意图。按新目标的主体、光线与肤色重新适配；不要复制原照片曝光、白平衡或几何。\n${style.intent}${extra ? `\n本次附加方向：${extra}` : ""}`},photoId,jobId,referenceData);
+    const job=await this.captureJob({mode:reference ? "reference" : "describe",reference,strength:strength ?? style.strength,localMasks,prompt:`风格名称：${style.name}\n以下是风格意图。按新目标的主体、光线与肤色重新适配；不要复制原照片曝光、白平衡或几何。\n${style.intent}${extra ? `\n本次附加方向：${extra}` : ""}`},photoId,jobId,signal,referenceData);
     job.styleId=style.id;job.styleName=style.name;await this.store.save(job);return job;
   }
   async plan(id: string, signal?: AbortSignal): Promise<Job> {
@@ -296,8 +309,8 @@ export class StudioHost {
       }
     });
   }
-  private async requireMasks() {
-    const capabilities=await this.lr.discoverMasks?.();
+  private async requireMasks(signal?: AbortSignal) {
+    const capabilities=await this.lr.discoverMasks?.(signal);
     if(!capabilities || !Object.keys(capabilities).length) throw new Error("当前 Lightroom MCP 不支持所需的蒙版工具。取消勾选局部蒙版后可生成全局方案。");
     return capabilities;
   }
@@ -376,12 +389,12 @@ export class StudioHost {
     }
     return got;
   }
-  private async renderStable(id: string|number): Promise<Buffer> {
-    await delay(this.settleMs);
-    let previous=await this.lr.preview(id);
+  private async renderStable(id: string|number, signal?: AbortSignal): Promise<Buffer> {
+    await delay(this.settleMs,undefined,{signal});
+    let previous=await this.lr.preview(id,signal);
     for(let attempt=0;attempt<4;attempt++) {
-      await delay(this.settleMs ? 700 : 0);
-      const current=await this.lr.preview(id);
+      await delay(this.settleMs ? 700 : 0,undefined,{signal});
+      const current=await this.lr.preview(id,signal);
       if(createHash("sha256").update(current).digest("hex")===createHash("sha256").update(previous).digest("hex")) return current;
       previous=current;
     }

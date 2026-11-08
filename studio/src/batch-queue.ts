@@ -26,6 +26,7 @@ export interface Batch {
   strength: number;
   state: "planning" | "finished" | "stopped";
   blockedByPhotoId?: string;
+  previewStopped?: boolean;
   items: BatchItem[];
 }
 
@@ -118,7 +119,7 @@ export class BatchQueue {
     const previousBlock = items.find(item => item.photoId === batch.blockedByPhotoId && item.status !== "restored");
     const blockedByPhotoId = (previousBlock ?? items.find(item => item.needsReview))?.photoId;
     return {
-      id: batch.id, styleName: batch.styleName, strength: batch.strength, items, progress, blockedByPhotoId,
+      id: batch.id, styleName: batch.styleName, strength: batch.strength, items, progress, blockedByPhotoId, previewStopped: batch.previewStopped,
       state: batch.state === "planning" && !progress ? "interrupted" : batch.state,
       previewable: blockedByPhotoId ? 0 : items.filter(item => item.canPreview).length,
     };
@@ -143,7 +144,7 @@ export class BatchQueue {
       publish(await this.view(batch, { stage: "planning", current: index + 1, total: ids.length }));
       if (signal.aborted) break;
       try {
-        const job = await this.host.captureStyle(styleId, item.photoId, batch.strength, "", item.jobId);
+        const job = await this.host.captureStyle(styleId, item.photoId, batch.strength, "", item.jobId, undefined, signal);
         if (!signal.aborted) await this.host.plan(job.id, signal);
       } catch (error) {
         if (signal.aborted) break;
@@ -156,7 +157,7 @@ export class BatchQueue {
     return this.view(batch);
   }
 
-  async preview(id: string, publish: (view: BatchView) => void) {
+  async preview(id: string, publish: (view: BatchView) => void, signal?: AbortSignal) {
     return withOperationLock(this.dir(id), async () => {
       const batch = await this.load(id);
       if ((await this.view(batch)).blockedByPhotoId) throw new Error("本批次已停止，请检查相关副本与恢复状态");
@@ -170,9 +171,17 @@ export class BatchQueue {
         if (this.canPreview(item, job)) eligible.push(item);
       }
       if (!eligible.length) throw new Error("此批次没有可预览的方案");
+      if (batch.previewStopped) {
+        batch.previewStopped = undefined;
+        await this.save(batch);
+      }
+      let stopped = false;
       for (const [index, item] of eligible.entries()) {
+        if (signal?.aborted) { stopped = true; break; }
         publish(await this.view(batch, { stage: "previewing", current: index + 1, total: eligible.length }));
+        if (signal?.aborted) { stopped = true; break; }
         try {
+          // Finish the in-flight photo, including its write/readback or recovery, before stopping.
           await this.host.preview(item.jobId);
         } catch (error) {
           item.previewError = String(error);
@@ -182,6 +191,10 @@ export class BatchQueue {
           await this.save(batch);
           if (batch.blockedByPhotoId) break;
         }
+      }
+      if (stopped) {
+        batch.previewStopped = true;
+        await this.save(batch);
       }
       return this.view(batch);
     });

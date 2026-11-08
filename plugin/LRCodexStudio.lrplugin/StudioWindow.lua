@@ -28,6 +28,7 @@ function Window.show()
                 local refreshWorkspace, loadHistory, openBatch, showBatchPhoto
                 local stylesById, conversationsById = {}, {}
                 local currentBatch, batchRows, knownBatches = nil, {}, {}
+                local runningTaskId, stopping
 
                 p.mode = prefs.mode or 'describe'
                 p.prompt = prefs.prompt or ''
@@ -49,6 +50,7 @@ function Window.show()
                 p.busy, p.idle = false, true
                 p.canGenerate, p.canPreview, p.canRestore, p.canCancel = false, false, false, false
                 p.canReconcile = false
+                p.cancelTitle = '停止'
                 p.loading, p.listBusy = false, false
                 p.feedback, p.historyText = '', '生成并预览第一轮后，在这里继续调整。'
                 local historyPages, historyPage = { p.historyText }, 1
@@ -424,10 +426,11 @@ function Window.show()
                 local labels = { capture = '正在读取 Lightroom 照片与预览…', generate = 'Codex 正在分析照片并生成方案…', preview = '正在创建副本并由 Lightroom 渲染…', restore = '正在恢复该任务的虚拟副本…', refine = '正在准备上一轮结果…', ['save-style'] = '正在保存调色意图和参考图副本…', ['apply-style'] = '正在为当前照片适配风格…' }
                 labels.reconcile = '正在核对中断任务的副本与快照…'
                 labels['batch-plan'], labels['batch-preview'] = '正在逐张生成批次方案…', '正在逐张创建批次预览副本…'
-                local function run(action, body)
+                local function run(action, body, pendingId)
                     if not p.idle then return end
                     local batchAction = action == 'batch-plan' or action == 'batch-preview'
                     p.busy = true
+                    p.cancelTitle = action == 'batch-preview' and '停止批量预览' or '停止'
                     buttons()
                     p.status = labels[action]
                     if batchAction then p.batchMessage = labels[action] end
@@ -435,23 +438,47 @@ function Window.show()
                         local succeeded, result = LrTasks.pcall(function()
                             body = body or {}
                             body.action = action
-                            local task = Client.request('POST', '/tasks', body)
-                            while task.state == 'running' do
-                                if closed then
-                                    if task.cancellable then Client.request('POST', '/cancel', {}) end
-                                    return nil
-                                end
-                                p.canCancel = task.cancellable == true
-                                p.status = labels[task.stage] or '正在处理…'
-                                if task.batch then showBatch(task.batch) end
-                                LrTasks.sleep(0.6)
-                                task = Client.request('GET', '/tasks/' .. task.id)
+                            local task = pendingId and { id = pendingId, state = 'running', stage = action }
+                                or Client.request('POST', '/tasks', body)
+                            if type(task) ~= 'table' or type(task.id) ~= 'string' then
+                                error('Host 未返回可跟踪的任务记录。请检查历史后再操作。', 0)
                             end
+                            runningTaskId = task.id
+                            prefs.pendingTaskId, prefs.pendingAction = task.id, action
+                            local failures = 0
+                            while task.state == 'running' and not closed do
+                                p.canCancel = failures == 0 and not stopping and task.cancellable == true
+                                if failures == 0 then
+                                    p.status = stopping or labels[task.stage] or '正在处理…'
+                                    if task.batch then showBatch(task.batch) end
+                                else
+                                    p.status = '暂时无法连接 Host，正在重新连接。可关闭窗口，任务仍会继续。'
+                                    if batchAction then p.batchMessage = p.status end
+                                end
+                                LrTasks.sleep(failures == 0 and 0.6 or math.min(5, failures * 1.5))
+                                if closed then return nil end
+                                local connected, nextTask = LrTasks.pcall(function()
+                                    return Client.request('GET', '/tasks/' .. runningTaskId, nil, true)
+                                end)
+                                if connected and not nextTask then
+                                    prefs.pendingTaskId, prefs.pendingAction = nil, nil
+                                    error('Host 已重启或任务记录已过期。请打开历史会话或批次，核对上次的结果。', 0)
+                                end
+                                if connected and type(nextTask) == 'table' and nextTask.id == runningTaskId and
+                                    (nextTask.state == 'running' or nextTask.state == 'completed' or nextTask.state == 'failed') then
+                                    task, failures = nextTask, 0
+                                else
+                                    failures = failures + 1
+                                end
+                            end
+                            if closed then return nil end
+                            prefs.pendingTaskId, prefs.pendingAction = nil, nil
                             if task.job then useJob(task.job) end
                             if task.batch and not closed then showBatch(task.batch) end
                             if task.state == 'failed' then error(task.error or '任务失败，请重试。', 0) end
                             return task.batch or task.job
                         end)
+                        runningTaskId, stopping = nil, nil
                         p.busy, p.canCancel = false, false
                         buttons()
                         if not closed then
@@ -469,7 +496,9 @@ function Window.show()
                                 if action == 'batch-plan' then
                                     p.status = result.state == 'stopped' and '生成已停止。已完成的方案保留在「批量」。' or '生成已结束。可在「批量」逐张查看结果。'
                                 elseif action == 'batch-preview' then
-                                    p.status = result.blockedByPhotoId and '整批预览已停止，请检查「批量」中的恢复状态。' or '预览已结束。请在「批量」查看各张照片的状态。'
+                                    if result.blockedByPhotoId then p.status = '整批预览已停止，请检查「批量」中的恢复状态。'
+                                    elseif result.previewStopped then p.status = '批量预览已停止。已完成的照片保留在「批量」。'
+                                    else p.status = '预览已结束。请在「批量」查看各张照片的状态。' end
                                     if currentJob then
                                         for _, row in ipairs(result.items) do
                                             if row.jobId == currentJob.id then openJob(currentJob.id); break end
@@ -478,7 +507,7 @@ function Window.show()
                                 elseif action == 'preview' then p.status = '预览已生成：请比较左右图。仅新虚拟副本被修改。'
                                 elseif action == 'restore' then p.status = resumeStatus(result)
                                 elseif action == 'reconcile' then p.status = resumeStatus(result); p.detailTab = 'analysis'
-                                elseif action == 'save-style' then p.status = '风格已保存：' .. body.name
+                                elseif action == 'save-style' then p.status = body.name and '风格已保存：' .. body.name or '风格已保存。'
                                 elseif action == 'generate' or action == 'refine' or action == 'apply-style' then
                                     p.status = resumeStatus(result)
                                     p.detailTab = 'diff'
@@ -615,10 +644,17 @@ function Window.show()
                         end },
                         f:push_button { title = '预览副本', enabled = bind 'canPreview', action = function() if currentJob then run('preview', { jobId = currentJob.id }) end end },
                         f:spacer { width = 16 },
-                        f:push_button { title = '停止生成', enabled = bind 'canCancel', action = function()
+                        f:push_button { title = bind 'cancelTitle', enabled = bind 'canCancel', action = function()
+                            local taskId = runningTaskId
+                            if not taskId then return end
                             LrTasks.startAsyncTask(function()
-                                local stopped, reason = LrTasks.pcall(function() Client.request('POST', '/cancel', {}) end)
-                                if not closed then p.status = stopped and '正在停止生成…' or tostring(reason) end
+                                local stopped, reason = LrTasks.pcall(function() Client.request('POST', '/cancel', { taskId = taskId }) end)
+                                if closed or runningTaskId ~= taskId then return end
+                                if stopped then
+                                    stopping = p.cancelTitle == '停止批量预览' and '当前照片完成后停止，余下照片保留待预览。' or '正在停止任务…'
+                                    p.canCancel = false
+                                end
+                                p.status = stopped and stopping or tostring(reason)
                             end)
                         end },
                         f:push_button { title = '恢复副本', enabled = bind 'canRestore', action = function() if currentJob then run('restore', { jobId = currentJob.id }) end end },
@@ -717,7 +753,9 @@ function Window.show()
                     },
                 }
 
-                if prefs.lastJobId then
+                if prefs.pendingTaskId and labels[prefs.pendingAction] then
+                    run(prefs.pendingAction, nil, prefs.pendingTaskId)
+                elseif prefs.lastJobId then
                     LrTasks.startAsyncTask(function()
                         local loaded, job = LrTasks.pcall(function() return Client.request('GET', '/jobs/' .. prefs.lastJobId) end)
                         if loaded and not closed and not p.busy and not currentJob then

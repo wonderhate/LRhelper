@@ -84,10 +84,10 @@ export interface ModelRuntime {
   generate(input: { request: GradeRequest; photo: Photo; baseline: Settings; keys: string[]; targetImage: string; referenceImage?: string; history?: ConversationTurn[]; maskCapabilities?: MaskCapabilities; previousMasks?: MaskPlan[]; signal?: AbortSignal }): Promise<{ plan: unknown; threadId?: string }>;
 }
 export interface Lightroom {
-  discover(): Promise<string[]>;
-  discoverMasks?(): Promise<MaskCapabilities>;
-  selected(): Promise<{ id: string | number }[]>;
-  metadata(id: string | number): Promise<Photo>;
-  preview(id: string | number): Promise<Buffer>;
+  discover(signal?: AbortSignal): Promise<string[]>;
+  discoverMasks?(signal?: AbortSignal): Promise<MaskCapabilities>;
+  selected(signal?: AbortSignal): Promise<{ id: string | number }[]>;
+  metadata(id: string | number, signal?: AbortSignal): Promise<Photo>;
+  preview(id: string | number, signal?: AbortSignal): Promise<Buffer>;
   call(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>>;
 }

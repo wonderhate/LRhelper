@@ -20,7 +20,7 @@ function Client.config()
     return config
 end
 
-function Client.request(method, route, data)
+function Client.request(method, route, data, allowMissing)
     local config = Client.config()
     local headers = {
         { field = 'X-Studio-Token', value = config.token },
@@ -35,6 +35,7 @@ function Client.request(method, route, data)
     if not body or body == '' then
         error('无法连接 Studio Host，请检查 Host 是否运行，然后重试。', 0)
     end
+    if allowMissing and response and response.status == 404 then return nil end
     local decoded = JSON:decode(body)
     if response and response.status and response.status >= 400 then
         error(decoded.error or 'Studio Host 请求失败', 0)

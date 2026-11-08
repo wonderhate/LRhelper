@@ -206,6 +206,19 @@ test('a cancelled generation saves an actionable message without creating a copy
   assert.match((await f.store.load(job.id)).error,/生成已停止/);assert.equal(f.calls.length,0);
 });
 
+test('stopping during capture propagates to Lightroom preview and leaves no usable draft', async t => {
+  const f=await setup(t), controller=new AbortController();
+  f.lr.preview=async (_id, signal)=>{
+    assert.equal(signal,controller.signal);
+    controller.abort();
+    signal.throwIfAborted();
+  };
+  await assert.rejects(f.host.capture({mode:'lucky',prompt:'',strength:1},undefined,undefined,controller.signal),{name:'AbortError'});
+  const [job]=await f.store.list();
+  assert.equal(job.status,'failed');assert.match(job.error,/已停止读取/);
+  assert.equal(f.calls.length,0);assert.equal(f.modelCalls,0);
+});
+
 async function localSetup(t) {
   const f=await setup(t);
   const capabilities={subject:{exposure:[-0.5,0.5]},sky:{highlights:[-30,30]}};

@@ -140,6 +140,24 @@ test('after host restart a batch exposes interrupted writes before offering the 
   assert.equal(f.writes.length, 0);
 });
 
+test('stopping a batch lets the current Lightroom write finish and leaves other photos ready', async t => {
+  const f = await batchFixture(t), controller = new AbortController();
+  const batch = await f.host.batches.plan(f.style.id, ['1', '2'], undefined, new AbortController().signal, () => {});
+  const call = f.lr.call.bind(f.lr);
+  f.lr.call = async (name, args) => {
+    if (name === 'set_develop_settings') controller.abort();
+    return call(name, args);
+  };
+  const stopped = await f.host.batches.preview(batch.id, () => {}, controller.signal);
+  assert.equal(stopped.previewStopped, true);
+  assert.deepEqual(stopped.items.map(item => item.status), ['previewed', 'planned']);
+  assert.deepEqual(f.writes.map(write => write.name), ['create_virtual_copies', 'create_develop_snapshot', 'set_develop_settings']);
+  assert.equal((await f.host.batches.show(batch.id)).previewStopped, true);
+  const resumed = await f.host.batches.preview(batch.id, () => {});
+  assert.equal(resumed.previewStopped, undefined);
+  assert.deepEqual(resumed.items.map(item => item.status), ['previewed', 'previewed']);
+});
+
 test('damaged journals do not hide valid records or let history resolve outside the job store', async t => {
   const f = await batchFixture(t);
   const makeBatch = () => f.host.batches.plan(f.style.id, ['1', '2'], undefined, new AbortController().signal, () => {});

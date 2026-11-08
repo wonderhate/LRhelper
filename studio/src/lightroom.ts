@@ -34,26 +34,26 @@ export class LightroomClient implements Lightroom {
     await this.client.connect(new StdioClientTransport({command:process.execPath,args:[this.serverEntry],env:{...env,LIGHTROOM_MCP_TOOLSETS:"all",LIGHTROOM_MCP_READ_ONLY:"false"},maxBufferSize:16*1024*1024}));
   }
   async close() { await this.client.close(); }
-  private async tools() {
+  private async tools(signal?: AbortSignal) {
     let cursor: string | undefined;
     const tools = [];
     do {
-      const page=await this.client.listTools(cursor ? {cursor} : {});
+      const page=await this.client.listTools(cursor ? {cursor} : {}, {signal});
       tools.push(...page.tools);
       cursor=page.nextCursor;
     } while(cursor);
     return new Map(tools.map(tool=>[tool.name,tool.inputSchema]));
   }
-  async discover(): Promise<string[]> {
-    const tools=await this.tools();
+  async discover(signal?: AbortSignal): Promise<string[]> {
+    const tools=await this.tools(signal);
     const missing=["get_selected_photos","get_photo_metadata","get_photo_preview","create_virtual_copies","create_develop_snapshot","apply_develop_snapshot","set_develop_settings"].filter(name=>!tools.has(name));
     const schema=tools.get("set_develop_settings") as {properties?:{settings?:{propertyNames?:{enum?:string[]}}}} | undefined;
     const keys=schema?.properties?.settings?.propertyNames?.enum;
     if(missing.length || !keys) throw new Error(`MCP capabilities missing: ${missing.join(", ") || "Develop setting schema"}`);
     return keys;
   }
-  async discoverMasks(): Promise<MaskCapabilities> {
-    const tools=await this.tools();
+  async discoverMasks(signal?: AbortSignal): Promise<MaskCapabilities> {
+    const tools=await this.tools(signal);
     const create=tools.get("create_mask") as {properties?:{
       type?:{enum?:string[]}; adjustments?:{properties?:Record<string,{type?:string;minimum?:number;maximum?:number}>};
     }} | undefined;
@@ -67,8 +67,9 @@ export class LightroomClient implements Lightroom {
     }
     return Object.keys(sliders).length ? Object.fromEntries(maskKinds.filter(kind=>create?.properties?.type?.enum?.includes(kind)).map(kind=>[kind,sliders])) : {};
   }
-  private async result(name: string,args: Record<string,unknown>) {
-    const response=await this.client.callTool({name,arguments:args},{timeout:360000}).catch(() => {
+  private async result(name: string,args: Record<string,unknown>,signal?: AbortSignal) {
+    const response=await this.client.callTool({name,arguments:args},{timeout:360000,signal}).catch(() => {
+      signal?.throwIfAborted();
       throw new LightroomOutcomeUnknown("disconnect_unknown");
     });
     if(response.isError) {
@@ -80,8 +81,8 @@ export class LightroomClient implements Lightroom {
     }
     return response;
   }
-  async call(name: string,args: Record<string,unknown>): Promise<Record<string,unknown>> {
-    const result=await this.result(name,args);
+  async call(name: string,args: Record<string,unknown>,signal?: AbortSignal): Promise<Record<string,unknown>> {
+    const result=await this.result(name,args,signal);
     const text=result.content.find(c=>c.type==="text");
     let data: unknown = result.structuredContent;
     try {
@@ -93,21 +94,21 @@ export class LightroomClient implements Lightroom {
     if((data as Record<string,unknown>).success===false) throw new Error(`Lightroom operation failed: ${name}`);
     return data as Record<string,unknown>;
   }
-  async selected() {
-    const result=await this.call("get_selected_photos",{limit:2,include_path:true});
+  async selected(signal?: AbortSignal) {
+    const result=await this.call("get_selected_photos",{limit:2,include_path:true},signal);
     const photos=result.photos as {id:string|number}[];
     if(!Array.isArray(photos)) throw new Error("Unexpected selection response");
     // Selection is not silently reduced to the first photo.
     if(photos.length!==1 || (typeof result.total==="number" && result.total!==1)) throw new Error("Select exactly one Lightroom photo, or supply --photo ID");
     return photos;
   }
-  async metadata(id: string|number): Promise<Photo> {
-    const photo=await this.call("get_photo_metadata",{photo_id:id,sections:["developSettings"]});
+  async metadata(id: string|number, signal?: AbortSignal): Promise<Photo> {
+    const photo=await this.call("get_photo_metadata",{photo_id:id,sections:["developSettings"]},signal);
     if(!photo.id || typeof photo.path!=="string" || !photo.developSettings) throw new Error("Photo metadata / Develop settings unavailable");
     return photo as unknown as Photo;
   }
-  async preview(id: string|number): Promise<Buffer> {
-    const result=await this.result("get_photo_preview",{photo_id:id,size:"detail"});
+  async preview(id: string|number, signal?: AbortSignal): Promise<Buffer> {
+    const result=await this.result("get_photo_preview",{photo_id:id,size:"detail"},signal);
     const image=result.content.find(c=>c.type==="image");
     if(!image || image.type!=="image") throw new Error("Lightroom returned no rendered preview");
     return Buffer.from(image.data,"base64");

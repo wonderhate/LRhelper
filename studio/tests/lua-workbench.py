@@ -89,6 +89,11 @@ package.loaded.StudioClient = {request=function(method, route, body)
     clientCalls[#clientCalls+1] = {method=method,route=route,body=body}
     if offline then error('Host offline') end
     if route=='/tasks' then nextAction=body.action;return {id='task',state='running',stage=body.action} end
+    if route=='/tasks/task' then
+        pollCount=(pollCount or 0)+1
+        if pollCount==pollFailureAt then error('Poll timed out') end
+        if pollCount<=(pollWaits or 0) then return {id='task',state='running',stage=nextAction,cancellable=true} end
+    end
     if route=='/cancel' then return {ok=true} end
     if route:find('^/styles/.-/xmp$') then return {path=body.output,keys={'Shadows2012'}} end
     if route:find('^/jobs/') then return recoveryJob or savedJob end
@@ -175,6 +180,25 @@ class WorkbenchLuaTests(unittest.TestCase):
 
     def test_offline_error_and_window_cleanup(self):
         self.run_lua("offline=true;button('读取选中照片').action();step();assert(not props().busy);assert(props().analysis:find('Host offline'));dialog.windowWillClose();step();assert(not _G.LRCodexStudio_WindowOpen)")
+
+    def test_second_poll_timeout_reconnects_and_reopening_keeps_the_same_task(self):
+        self.run_lua(r'''
+            pollWaits=2;pollFailureAt=2
+            button('读取选中照片').action()
+            step();step();step()
+            assert(props().busy and props().status:find('重新连接'))
+            assert(preferences.pendingTaskId=='task')
+            dialog.windowWillClose();step();require('StudioWindow').show()
+            step();step();step();step()
+            assert(not props().busy and props().photoId=='1')
+            assert(preferences.pendingTaskId==nil)
+            local submissions=0
+            for _,call in ipairs(clientCalls) do
+                if call.route=='/tasks' then submissions=submissions+1 end
+                assert(call.route~='/cancel')
+            end
+            assert(submissions==1)
+        ''')
 
     def test_existing_dialog_is_brought_to_front_and_can_reopen_after_close(self):
         self.run_lua("require('StudioWindow').show();assert(broughtToFront);dialog.windowWillClose();step();require('StudioWindow').show();step();assert(_G.LRCodexStudio_WindowOpen)")

@@ -81,7 +81,7 @@ export const validStyle = ajv.compile<SavedStyle>(record({
 const batchPhotoId = { type: "string", pattern: "^[1-9][0-9]*$" };
 export const validBatch = ajv.compile<Batch>(record({
   styleId: recordId, styleName: nonEmpty, strength, state: { enum: ["planning", "finished", "stopped"] },
-  blockedByPhotoId: batchPhotoId,
+  blockedByPhotoId: batchPhotoId, previewStopped: bool,
   items: { ...array(object({ photoId: batchPhotoId, jobId: recordId, planError: text, previewError: text },
     ["photoId", "jobId"])), minItems: 2, maxItems: 8 },
 }, ["styleId", "styleName", "strength", "state", "items"]));
