@@ -26,6 +26,23 @@ if lrLogger then lrLogger:enable("logfile") end
 
 local Log = {}
 
+function Log.redact(value)
+    local msg = tostring(value):gsub("[%c]", " ")
+    local state = _G.LightroomMCP_State
+    local token = state and state.token
+    if type(token) == "string" and #token > 0 then
+        msg = msg:gsub(token:gsub("([^%w])", "%%%1"), "[credential]")
+    end
+    msg = msg:gsub("[Bb]earer%s+[%w._+/%-=]+", "Bearer [credential]")
+        :gsub("sk%-[%w_%-]+", "[credential]")
+        :gsub("([Aa][Pp][Ii][_-]?[Kk][Ee][Yy]%s*[:=]%s*)%S+", "%1[credential]")
+        :gsub("%a:[/\\].*", "[path]")
+        :gsub("\\\\.*", "[path]")
+        :gsub("^/.*", "[path]")
+        :gsub("([%s('\"=])/[~%w_.].*", "%1[path]")
+    return msg:sub(1, 1000)
+end
+
 local resolvedPath
 local pathResolved = false
 
@@ -65,7 +82,7 @@ local function rotateIfLarge(path, size)
 end
 
 local function write(level, msg)
-    msg = tostring(msg)
+    msg = Log.redact(msg)
     if lrLogger then
         if level == "warn" then
             lrLogger:warn(msg)

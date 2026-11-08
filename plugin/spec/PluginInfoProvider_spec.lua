@@ -259,6 +259,20 @@ describe("PluginInfoProvider server task", function()
             assert.is_nil(sends[1])
         end)
 
+        it("keeps credentials and reference paths out of diagnostics for a malformed frame", function()
+            local sends = {}
+            local binds = startServerCapturing(sends)
+            local token = _G.LightroomMCP_State.token
+            local key, reference = "sk-private-key", "/home/private/Reference photo.jpg"
+            binds[1].onMessage(nil, '{"hello":"' .. token .. '","id":"req_1","key":"' .. key
+                .. '","reference":"' .. reference .. '","bad":"\\q"}')
+            local diagnostics = table.concat(_G.LightroomMCP_State.log, "\n") .. table.concat(sends, "\n")
+            for _, value in ipairs({ token, key, reference }) do
+                assert.is_nil(diagnostics:find(value, 1, true))
+            end
+            assert.is_not_nil(diagnostics:find("JSON decode failed", 1, true))
+        end)
+
         it("stays silent when no id can be salvaged", function()
             local sends = {}
             local binds = startServerCapturing(sends)

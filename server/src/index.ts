@@ -20,6 +20,7 @@ import { PluginLiveness } from "./plugin-liveness.js";
 import { waitUntil } from "./wait-until.js";
 import { diagnoseUnresponsive, UnresponsiveReporter } from "./port-owner.js";
 import { acquireInstanceLock, lockHolder, lockHolderUnresponsive } from "./instance-lock.js";
+import { logDiagnostic } from "./log-safety.js";
 import {
   ensurePluginInstalled,
   findBundledPlugin,
@@ -74,7 +75,7 @@ async function main() {
   try {
     cli = parseCli(process.argv);
   } catch (err) {
-    console.error((err as Error).message);
+    logDiagnostic((err as Error).message);
     process.exit(2);
   }
 
@@ -101,11 +102,11 @@ async function main() {
     REQUEST_PORT = requestPort();
     RESPONSE_PORT = responsePort();
   } catch (err) {
-    console.error((err as Error).message);
+    logDiagnostic((err as Error).message);
     process.exit(1);
   }
 
-  ensurePluginInstalled(here, (m) => console.error(m));
+  ensurePluginInstalled(here, logDiagnostic);
 
   const bridge = new Bridge({
     ipcPath: brokerPath(REQUEST_PORT, RESPONSE_PORT),
@@ -114,6 +115,7 @@ async function main() {
     readToken: tryReadToken,
     holderUnresponsive: () => lockHolderUnresponsive(REQUEST_PORT, RESPONSE_PORT),
     lockHolder: () => lockHolder(REQUEST_PORT, RESPONSE_PORT),
+    log: logDiagnostic,
   });
 
   const server = createMcpServer({ callTool: (name, args, options) => bridge.callTool(name, args, options) }, { toolsets, readOnly });
@@ -161,12 +163,13 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
     getToken: () => readToken(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     actionTimeoutsMs: ACTION_TIMEOUTS_MS,
+    log: logDiagnostic,
   });
   const liveness = new PluginLiveness();
   let recoveryTimer: NodeJS.Timeout | null = null;
   const unresponsive = new UnresponsiveReporter({
     diagnose: () => diagnoseUnresponsive([REQUEST_PORT, RESPONSE_PORT]),
-    log: (message) => console.error(`[plugin] ${message}`),
+    log: (message) => logDiagnostic(`[plugin] ${message}`),
   });
   const probeOnConnect = () => {
     const token = liveness.beginProbe();
@@ -194,6 +197,7 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
     responseSocket = new PluginSocket({
       port: RESPONSE_PORT,
       label: "response",
+      log: logDiagnostic,
       onLine: (line) => dispatcher.handleResponseLine(line),
       onConnect: () => probeOnConnect(),
       onDisconnect: () => {
@@ -217,6 +221,7 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
   requestSocket = new PluginSocket({
     port: REQUEST_PORT,
     label: "request",
+    log: logDiagnostic,
     onConnect: () => {
       if (responseConnectTimer) clearTimeout(responseConnectTimer);
       responseConnectTimer = setTimeout(() => {
@@ -238,7 +243,7 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
     dispatcher,
     HEARTBEAT_INTERVAL_MS,
     (err) => {
-      console.error(`[heartbeat] ping failed: ${err.message}`);
+      logDiagnostic(`[heartbeat] ping failed: ${err.message}`);
       // A ping that fails because the socket is down is an ordinary disconnect,
       // not a second bridge holding the plugin. Only diagnose the latter while
       // the connection is actually up, or a stopped plugin gets blamed on a
@@ -311,6 +316,6 @@ function runInstallPlugin(): void {
 }
 
 main().catch((error) => {
-  console.error("Fatal error:", error);
+  logDiagnostic("Fatal error: " + String(error));
   process.exit(1);
 });

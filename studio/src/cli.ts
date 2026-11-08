@@ -76,7 +76,7 @@ async function main() {
     await client.connect();
     if(command==="serve") {
       const server = new WorkbenchServer(host,config.hostFile,()=>controller.abort(),root);
-      console.log(JSON.stringify(await server.start(),null,2));
+      await server.start();
       console.error("Studio Host 已就绪，可从 Lightroom 菜单打开工作台。按 Ctrl+C 退出。");
       await new Promise<void>(resolve => {controller.signal.addEventListener("abort",()=>resolve(),{once:true});process.once("SIGTERM",()=>resolve());});
       await server.stop();
@@ -96,4 +96,8 @@ async function main() {
     }
   } finally { await client.close(); }
 }
-main().catch(error=>{console.error(String(error));process.exitCode=1;});
+main().catch(error=>{
+  if(process.argv[2]==="serve") console.error("Studio Host 启动失败。请检查安装配置和 Lightroom MCP 连接。");
+  else console.error(String(error));
+  process.exitCode=1;
+});

@@ -383,8 +383,7 @@ function MetadataHandler.setGps(args)
         end
     end)
 
-    Log.info(string.format("Set GPS to %s, %s for %d photos",
-        tostring(args.latitude), tostring(args.longitude), updatedCount))
+    Log.info(string.format("Set GPS for %d photos", updatedCount))
 
     return {
         success = true,

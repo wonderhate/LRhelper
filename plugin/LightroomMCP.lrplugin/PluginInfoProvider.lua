@@ -133,6 +133,7 @@ local function isBindFailure(errStr)
 end
 
 local function addLog(msg)
+    msg = Log.redact(msg)
     table.insert(pluginState.log, os.date("%H:%M:%S") .. " - " .. msg)
     if #pluginState.log > 100 then
         table.remove(pluginState.log, 1)
@@ -162,9 +163,9 @@ local function writeTokenFile(token)
     local dir = LrPathUtils.child(tokenDir(), "lightroom-mcp")
     LrFileUtils.createAllDirectories(dir)
     local path = tokenFilePath()
-    local fh, openErr = io.open(path, "w")
+    local fh = io.open(path, "w")
     if not fh then
-        addLog("Token write failed: " .. tostring(openErr))
+        addLog("Could not write the local authentication file")
         return false
     end
     fh:write(token)
@@ -349,7 +350,7 @@ local function sendResponse(response)
     end
     local ok, payload = pcall(function() return JSON:encode(response) end)
     if not ok then
-        addLog("JSON encode failed: " .. tostring(payload))
+        addLog("Could not encode plugin response")
         return
     end
     pluginState.responseSocket:send(payload .. "\n")
@@ -449,7 +450,7 @@ local function consumeMessage(message)
 
     local parsedOk, request = pcall(function() return JSON:decode(message) end)
     if not parsedOk or type(request) ~= "table" then
-        addLog("JSON decode failed")
+        addLog("JSON decode failed (" .. #message .. " bytes)")
         -- A client that cannot be decoded still deserves an answer, or it sits
         -- there until its own 30s timeout with no clue why. Salvage id+token by
         -- pattern: only an authenticated caller gets the error back, so
@@ -499,7 +500,7 @@ local function startServer()
     pluginState.token = generateToken()
     local tokenWritten = writeTokenFile(pluginState.token)
     if tokenWritten then
-        addLog("Token written to " .. tokenFilePath())
+        addLog("Local authentication file updated")
     end
 
     local requestPort, responsePort = readPortPrefs()
