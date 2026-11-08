@@ -1,5 +1,4 @@
 import { randomUUID, createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { JobStore, available, checkImage, hasVerifiedPreview } from "./job-store.js";
@@ -10,6 +9,7 @@ import { checkMask, limitSkinHsl, mapMasks, maskSliderNames } from "./grading/ma
 import { StyleLibrary } from "./style-library.js";
 import { BatchQueue } from "./batch-queue.js";
 import { LightroomOutcomeUnknown } from "./lightroom.js";
+import { imageLimit, localFilePath, readBoundedFile, readLocalFile } from "./local-files.js";
 import type { GradeRequest, Job, Lightroom, MaskPlan, MaskSummary, ModelRuntime, Settings } from "./types.js";
 
 export class StudioHost {
@@ -19,7 +19,10 @@ export class StudioHost {
     this.styles=new StyleLibrary(path.join(path.dirname(store.root),"styles"));
     this.batches = new BatchQueue(this);
   }
-  async capture(request: GradeRequest, photoId?: string|number, jobId: string = randomUUID()): Promise<Job> {
+  async capture(request: GradeRequest, photoId?: string|number, jobId?: string): Promise<Job> {
+    return this.captureJob(request,photoId,jobId);
+  }
+  private async captureJob(request: GradeRequest, photoId?: string|number, jobId: string = randomUUID(), referenceData?: Buffer): Promise<Job> {
     if(!["describe","reference","lucky"].includes(request.mode)) throw new Error("Unknown grading mode");
     if(request.mode!=="reference") request={...request,reference:undefined};
     if(!Number.isFinite(request.strength) || request.strength<0 || request.strength>1) throw new Error("Strength must be 0–1");
@@ -30,7 +33,8 @@ export class StudioHost {
     const id=photoId ?? (await this.lr.selected())[0].id;
     const source=await this.lr.metadata(id);
     await available(source.path);
-    const reference=request.reference ? await readFile(request.reference) : undefined;
+    const reference=request.reference ? referenceData ?? await readBoundedFile(request.reference,imageLimit,
+      "Reference must be a JPEG, PNG or WebP image below 20 MB") : undefined;
     const referenceFile=reference ? `reference.${checkImage(reference)}` : undefined;
     const job: Job={version:1,id:jobId,createdAt:new Date().toISOString(),status:"captured",request,source,sourceFingerprint:fingerprint(source),baseline:flatten(source.developSettings),capabilities,maskCapabilities};
     job.conversationId=job.id;job.revision=1;
@@ -81,9 +85,9 @@ export class StudioHost {
       const capabilities=await this.lr.discover();
       const maskCapabilities=localMasks ? await this.requireMasks() : undefined;
       this.mapChain(chain,allowedKeys(capabilities,parent.baseline));
-      const original=await readFile(path.join(this.store.dir(chain[0].id),"before.jpg"));
-      const rendered=await readFile(path.join(this.store.dir(parent.id),"after.jpg"));
-      const reference=parent.referenceFile ? await readFile(path.join(this.store.dir(parent.id),parent.referenceFile)) : undefined;
+      const original=await readLocalFile(this.store.dir(chain[0].id),"before.jpg",imageLimit,"原始预览不可用");
+      const rendered=await readLocalFile(this.store.dir(parent.id),"after.jpg",imageLimit,"上一轮预览不可用");
+      const reference=parent.referenceFile ? await readLocalFile(this.store.dir(parent.id),parent.referenceFile,imageLimit,"任务参考图无效") : undefined;
       const job: Job={version:1,id:randomUUID(),createdAt:new Date().toISOString(),status:"captured",request:{...parent.request,prompt:feedback.trim(),strength,localMasks},source:parent.source,sourceFingerprint:parent.sourceFingerprint,baseline:parent.baseline,capabilities,maskCapabilities,parentJobId:parent.id,conversationId:chain[0].id,revision:chain.length+1,referenceFile:parent.referenceFile,styleId:parent.styleId,styleName:parent.styleName};
       await this.store.create(job);
       try {
@@ -118,7 +122,8 @@ export class StudioHost {
     if(typeof extra!=="string" || extra.length>8000) throw new Error("附加描述过长");
     const style=await this.styles.load(styleId);
     const reference=style.referenceFile ? path.join(this.styles.dir(style.id),style.referenceFile) : undefined;
-    const job=await this.capture({mode:reference ? "reference" : "describe",reference,strength:strength ?? style.strength,localMasks,prompt:`风格名称：${style.name}\n以下是风格意图。按新目标的主体、光线与肤色重新适配；不要复制原照片曝光、白平衡或几何。\n${style.intent}${extra ? `\n本次附加方向：${extra}` : ""}`},photoId,jobId);
+    const referenceData=style.referenceFile ? await readLocalFile(this.styles.dir(style.id),style.referenceFile,imageLimit,"风格参考图无效") : undefined;
+    const job=await this.captureJob({mode:reference ? "reference" : "describe",reference,strength:strength ?? style.strength,localMasks,prompt:`风格名称：${style.name}\n以下是风格意图。按新目标的主体、光线与肤色重新适配；不要复制原照片曝光、白平衡或几何。\n${style.intent}${extra ? `\n本次附加方向：${extra}` : ""}`},photoId,jobId,referenceData);
     job.styleId=style.id;job.styleName=style.name;await this.store.save(job);return job;
   }
   async plan(id: string, signal?: AbortSignal): Promise<Job> {
@@ -131,7 +136,9 @@ export class StudioHost {
         if(!keys.length) throw new Error("No supported global grading settings available");
         const chain=await this.chain(id),parents=chain.slice(0,-1);
         const previous=parents.length ? this.mapChain(parents,keys) : undefined;
-        const result=await this.model.generate({request:job.request,photo:job.source,baseline:{...job.baseline,...previous?.settings},keys,targetImage:path.join(this.store.dir(id),job.parentJobId ? "input.jpg" : "before.jpg"),referenceImage:job.referenceFile ? path.join(this.store.dir(id),job.referenceFile) : undefined,history:parents.map(parent=>({direction:parent.request.prompt,title:parent.plan!.title,adaptation:parent.plan!.analysis.adaptation})),maskCapabilities:job.maskCapabilities,previousMasks:previous?.masks,signal});
+        const targetImage=await localFilePath(this.store.dir(id),job.parentJobId ? "input.jpg" : "before.jpg",imageLimit,"照片预览不可用");
+        const referenceImage=job.referenceFile ? await localFilePath(this.store.dir(id),job.referenceFile,imageLimit,"任务参考图无效") : undefined;
+        const result=await this.model.generate({request:job.request,photo:job.source,baseline:{...job.baseline,...previous?.settings},keys,targetImage,referenceImage,history:parents.map(parent=>({direction:parent.request.prompt,title:parent.plan!.title,adaptation:parent.plan!.analysis.adaptation})),maskCapabilities:job.maskCapabilities,previousMasks:previous?.masks,signal});
         signal?.throwIfAborted();
         job.plan=validatePlan(result.plan,keys,job.maskCapabilities);
         chain[chain.length-1]=job;
@@ -163,7 +170,7 @@ export class StudioHost {
       const source=await this.lr.metadata(job.source.id);
       if(fingerprint(source)!==job.sourceFingerprint) throw new Error("Source edit changed since capture; capture and plan again");
       await available(source.path);
-      const before=await readFile(path.join(this.store.dir(id),"before.jpg"));
+      const before=await readLocalFile(this.store.dir(id),"before.jpg",imageLimit,"原始预览不可用");
       if(masks.length && !before.equals(await this.renderStable(source.id))) throw new Error("源照片的渲染图已变更，请重新读取并生成方案。");
       try {
         job.renderCompleted=false;

@@ -9,6 +9,7 @@ import { parseBatchPhotos, type BatchView } from "./batch-queue.js";
 import { defaultHostFile } from "./configuration.js";
 import { VERSION } from "./version.js";
 import { hasVerifiedPreview } from "./job-store.js";
+import { imageLimit, localFilePath } from "./local-files.js";
 
 interface Task {
   id: string;
@@ -46,7 +47,10 @@ function describeDiff(changes: Diff[]) {
 
 export async function jobView(job: Job, host: StudioHost) {
   const dir = host.store.dir(job.id);
-  const canRefine = await hasVerifiedPreview(job, dir);
+  const imagePath = (name: string) => localFilePath(dir, name, imageLimit, "预览文件不可用").catch(() => "");
+  const [canRefine, beforePath, referencePath] = await Promise.all([
+    hasVerifiedPreview(job, dir), imagePath("before.jpg"), job.referenceFile ? imagePath(job.referenceFile) : "",
+  ]);
   const sliderLabels={exposure:"曝光",highlights:"高光",shadows:"阴影",saturation:"饱和度"};
   const maskLines=(job.masks ?? []).map(mask=>{
     const values=mask.adjustments.map(({key,value})=>`${sliderLabels[key]} ${value>0 ? "+" : ""}${value}`).join("，");
@@ -76,9 +80,9 @@ export async function jobView(job: Job, host: StudioHost) {
     maskSummary: maskLines.join("\n\n"),
     stepDiff:(job.stepDiff ?? job.diff ?? []).map(d=>`${d.key}: ${JSON.stringify(d.before)} → ${JSON.stringify(d.after)}`).join("\n"),
     displayStepDiff:describeDiff(job.stepDiff ?? job.diff ?? []),
-    beforePath: path.join(dir, "before.jpg"),
+    beforePath,
     afterPath: canRefine ? path.join(dir, "after.jpg") : "",
-    referencePath: job.referenceFile ? path.join(dir, job.referenceFile) : "",
+    referencePath,
     error: job.error, recoveryError: job.recoveryError, outcomeUnknown: job.outcomeUnknown,
   };
 }

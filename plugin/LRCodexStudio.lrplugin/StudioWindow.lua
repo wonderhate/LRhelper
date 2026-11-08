@@ -178,7 +178,7 @@ function Window.show()
                     end
                     p.photoId = job.photoId
                     p.photo = job.filename .. '  ·  照片 ' .. job.photoId .. '  ·  第 ' .. tostring(job.revision or 1) .. ' 轮'
-                    p.beforePath = LrFileUtils.exists(job.beforePath) and job.beforePath or ''
+                    p.beforePath = job.beforePath ~= '' and LrFileUtils.exists(job.beforePath) and job.beforePath or ''
                     p.afterPath = job.afterPath ~= '' and LrFileUtils.exists(job.afterPath) and job.afterPath or ''
                     if p.afterPath ~= '' then
                         p.afterTitle = job.status == 'restored' and '上次预览（副本已恢复）' or '副本预览'

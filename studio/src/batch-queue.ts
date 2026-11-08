@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { withOperationLock } from "./job-store.js";
+import { withOperationLock } from "./operation-lock.js";
 import type { StudioHost } from "./studio-host.js";
 import type { Job } from "./types.js";
+import { isRecordId, readRecord } from "./local-files.js";
+import { validBatch } from "./journal-schema.js";
 
 const maxPhotos = 8;
-const idPattern = /^[0-9a-f-]{36}$/;
 
 interface BatchItem {
   photoId: string;
@@ -15,7 +16,7 @@ interface BatchItem {
   previewError?: string;
 }
 
-interface Batch {
+export interface Batch {
   version: 1;
   id: string;
   createdAt: string;
@@ -49,15 +50,16 @@ export class BatchQueue {
   }
 
   dir(id: string) {
-    if (!idPattern.test(id)) throw new Error("批次 ID 无效");
+    if (!isRecordId(id)) throw new Error("批次 ID 无效");
     return path.join(this.root, id);
   }
 
   private async load(id: string): Promise<Batch> {
-    const batch = JSON.parse(await readFile(path.join(this.dir(id), "batch.json"), "utf8")) as Batch;
-    if (batch.version !== 1 || batch.id !== id || !Array.isArray(batch.items)
-      || batch.items.some(item => !item || typeof item.jobId !== "string" || !idPattern.test(item.jobId))
-      || new Set(batch.items.map(item => item.jobId)).size !== batch.items.length) throw new Error("批次记录无效");
+    const problem = "批次记录无效";
+    const batch = await readRecord(this.dir(id), "batch.json", problem);
+    if (!validBatch(batch) || batch.id !== id
+      || new Set(batch.items.map(item => item.jobId)).size !== batch.items.length
+      || (batch.blockedByPhotoId && !batch.items.some(item => item.photoId === batch.blockedByPhotoId))) throw new Error(problem);
     parseBatchPhotos(batch.items.map(item => item.photoId));
     return batch;
   }
@@ -76,7 +78,7 @@ export class BatchQueue {
     });
     const summaries = [];
     for (const entry of entries) {
-      if (!entry.isDirectory() || !idPattern.test(entry.name)) continue;
+      if (!entry.isDirectory() || !isRecordId(entry.name)) continue;
       try {
         const batch = await this.load(entry.name);
         summaries.push({ id: batch.id, styleName: batch.styleName, createdAt: batch.createdAt, total: batch.items.length });

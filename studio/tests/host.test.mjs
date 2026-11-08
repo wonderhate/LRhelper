@@ -1,8 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,rm,readFile} from 'node:fs/promises';
+import {mkdtemp,writeFile,rm,readFile,truncate} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
 import {JobStore} from '../dist/job-store.js';
 import {StudioHost} from '../dist/studio-host.js';
 import {LightroomOutcomeUnknown} from '../dist/lightroom.js';
@@ -112,6 +114,31 @@ test('job lock prevents duplicate side effects across concurrent preview request
   assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
   assert.equal(f.calls.filter(c=>c.name==='create_virtual_copies').length,1);
 });
+test('the operation lock waits for a live owner and reclaims only after process exit', {
+  skip: !['win32','linux'].includes(process.platform),
+}, async t => {
+  const f=await setup(t),job=await f.capture();
+  const directory=f.store.dir(job.id);
+  const module=new URL('../dist/operation-lock.js',import.meta.url).href;
+  const child=spawn(process.execPath,['--input-type=module','-e',`
+    import {withOperationLock} from ${JSON.stringify(module)};
+    await withOperationLock(process.argv[1],async()=>{
+      console.log('locked');
+      await new Promise(()=>{});
+    });
+  `,directory],{stdio:['ignore','pipe','inherit']});
+  const ended=once(child,'exit');
+  t.after(async()=>{child.kill();await ended;});
+  await Promise.race([once(child.stdout,'data'),ended.then(()=>{throw new Error('lock process exited before taking the lock');})]);
+  await assert.rejects(f.store.lock(job.id,async()=>{assert.fail('live lock taken');}),/正在运行/);
+  const lockFile=path.join(directory,'operation.lock');
+  assert.equal(JSON.parse(await readFile(lockFile,'utf8')).pid,child.pid);
+  child.kill();await ended;
+  assert.equal(await f.store.lock(job.id,async()=>true),true);
+  await writeFile(lockFile,'unreadable lock');
+  await assert.rejects(f.store.lock(job.id,async()=>{assert.fail('unreadable lock taken');}),/无法确认/);
+  assert.equal(await readFile(lockFile,'utf8'),'unreadable lock');
+});
 test('missing photo and invalid reference fail before calling AI',async t=>{
   const f=await setup(t);await rm(f.source.path);
   await assert.rejects(f.capture(),/unavailable/);assert.equal(f.modelCalls,0);
@@ -120,6 +147,15 @@ test('missing photo and invalid reference fail before calling AI',async t=>{
 test('non-image reference is rejected before creating a grading proposal',async t=>{
   const f=await setup(t),ref=path.join(f.dir,'ref.jpg');await writeFile(ref,'not an image');
   await assert.rejects(f.host.capture({mode:'reference',prompt:'',strength:1,reference:ref}),/JPEG/);assert.equal(f.modelCalls,0);
+});
+test('oversized and non-file references are refused before any job is saved', async t => {
+  const f=await setup(t), ref=path.join(f.dir,'big.jpg');
+  await writeFile(ref,Buffer.from([255,216,255]));
+  await truncate(ref,20*1024*1024+1);
+  for (const reference of [ref,f.dir]) {
+    await assert.rejects(f.host.capture({mode:'reference',prompt:'',strength:1,reference}));
+  }
+  assert.deepEqual(await f.store.list(),[]);
 });
 for(const mode of ['describe','lucky'])test(mode+' ignores a stale reference from another mode',async t=>{
   const f=await setup(t);

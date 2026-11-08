@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,rm,symlink} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {JobStore} from '../dist/job-store.js';
@@ -120,6 +120,34 @@ test('batch stops when a write is unconfirmed even with a known recovery snapsho
   assert.deepEqual(f.writes.map(write => write.name), ['create_virtual_copies', 'create_develop_snapshot', 'set_develop_settings']);
   assert.equal((await f.store.load(blocked.items[0].jobId)).outcomeUnknown, 'timeout_unknown');
   assert.equal(blocked.items[1].status, 'planned');
+});
+
+test('damaged journals do not hide valid records or let history resolve outside the job store', async t => {
+  const f = await batchFixture(t);
+  const makeBatch = () => f.host.batches.plan(f.style.id, ['1', '2'], undefined, new AbortController().signal, () => {});
+  const good = await makeBatch(), damaged = await makeBatch();
+  const jobId = damaged.items[0].jobId;
+  const jobFile = path.join(f.store.dir(jobId), 'job.json');
+  const job = JSON.parse(await readFile(jobFile, 'utf8'));
+  await writeFile(jobFile, JSON.stringify({ ...job, referenceFile: '../../other.jpg' }));
+  await assert.rejects(f.store.load(jobId), /任务记录无效/);
+  assert.ok(!(await f.store.list()).some(item => item.id === jobId));
+  assert.ok((await f.store.list()).some(item => item.id === f.job.id));
+  assert.equal((await f.host.batches.show(damaged.id)).items[0].status, 'failed');
+
+  const saved = await f.host.saveStyle(f.job.id, '损坏记录');
+  const styleFile = path.join(f.host.styles.dir(saved.id), 'style.json');
+  const style = JSON.parse(await readFile(styleFile, 'utf8'));
+  await writeFile(styleFile, JSON.stringify({ ...style, sourcePlan: { title: 'incomplete' } }));
+  assert.deepEqual((await f.host.styles.list()).map(item => item.id), [f.style.id]);
+  const batchFile = path.join(f.host.batches.dir(damaged.id), 'batch.json');
+  const batch = JSON.parse(await readFile(batchFile, 'utf8'));
+  await writeFile(batchFile, JSON.stringify({ ...batch, blockedByPhotoId: '999' }));
+  assert.deepEqual((await f.host.batches.list()).map(item => item.id), [good.id]);
+
+  await rm(f.store.dir(jobId), { recursive: true });
+  await symlink(f.store.dir(f.job.id), f.store.dir(jobId), 'junction');
+  await assert.rejects(f.store.load(jobId), /任务记录无效/);
 });
 
 test('refinement uses the actual prior render and retains unmentioned settings in a new copy',async t=>{
