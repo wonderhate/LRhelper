@@ -140,7 +140,7 @@ Run `node tests/e2e/live/folders.mjs` after importing the 200-photo batch to ver
 
 ## Catalog removal check
 
-After installing the candidate bundle and restarting into the marked throwaway catalog, run `node tests/e2e/live/remove-from-catalog.mjs`. It imports three uniquely named JPEG copies, verifies confirmation guards, removes two in one call, checks the catalog count and every original fixture, verifies surviving selection, and checks all three files still exist after cleanup. The copied files remain in the throwaway catalog folder for inspection. Run with exclusive app and bridge ownership: the script briefly closes MCP to stage selection through the test-only TCP action.
+After installing the candidate bundle and restarting into the marked throwaway catalog, run `node tests/e2e/live/remove-from-catalog.mjs`. It imports three uniquely named JPEG copies and pauses for you to select the two photos it identifies. It then verifies confirmation guards, removes two in one call, checks the catalog count and every original fixture, verifies surviving selection, and checks all three files still exist after cleanup. The copied files remain in the throwaway catalog folder for inspection.
 
 Stop without retrying if removal opens a blocking dialog, affects only the active photo, or removes unrequested virtual copies or stack members. Check master/virtual-copy and stacked-photo behavior manually on additional disposable imports before accepting a new Lightroom version. The tool refuses a master unless all its virtual copies are explicitly included. It restores module, sources and selection; Library remains in grid view because the documented SDK has no primary-view getter.
 

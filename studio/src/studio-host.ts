@@ -2,13 +2,14 @@ import { randomUUID, createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { JobStore, available, checkImage } from "./job-store.js";
+import { JobStore, available, checkImage, hasVerifiedPreview } from "./job-store.js";
 import { allowedKeys, equalValue, fingerprint, flatten, stable } from "./grading/settings.js";
 import { validatePlan } from "./grading/validator.js";
 import { mapPlan } from "./grading/mapper.js";
 import { checkMask, limitSkinHsl, mapMasks, maskSliderNames } from "./grading/masks.js";
 import { StyleLibrary } from "./style-library.js";
 import { BatchQueue } from "./batch-queue.js";
+import { LightroomOutcomeUnknown } from "./lightroom.js";
 import type { GradeRequest, Job, Lightroom, MaskPlan, MaskSummary, ModelRuntime, Settings } from "./types.js";
 
 export class StudioHost {
@@ -75,7 +76,7 @@ export class StudioHost {
     return this.store.lock(parentId,async()=>{
       const chain=await this.chain(parentId),parent=chain.at(-1)!;
       if(chain.length>=20) throw new Error("本会话已达 20 轮，请开始新会话");
-      if(!parent.plan || !["previewed","restored"].includes(parent.status)) throw new Error("请先预览上一轮，再继续调整");
+      if(!await hasVerifiedPreview(parent,this.store.dir(parent.id))) throw new Error("请先完成上一轮预览，再继续调整");
       if(fingerprint(await this.lr.metadata(parent.source.id))!==parent.sourceFingerprint) throw new Error("源照片已变更，请重新读取并开始新会话");
       const capabilities=await this.lr.discover();
       const maskCapabilities=localMasks ? await this.requireMasks() : undefined;
@@ -108,8 +109,10 @@ export class StudioHost {
     return {id:root,jobs:jobs.map(job=>({id:job.id,parentJobId:job.parentJobId,revision:job.revision ?? 1,status:job.status,title:job.plan?.title ?? "未完成",direction:job.request.prompt,error:job.error,adaptation:job.plan?.analysis.adaptation ?? ""}))};
   }
   async saveStyle(id: string, name: string) {
-    const chain=await this.chain(id);
-    return this.styles.save(chain.at(-1)!,chain,name,this.store);
+    return this.store.lock(id,async()=>{
+      const chain=await this.chain(id);
+      return this.styles.save(chain.at(-1)!,chain,name,this.store);
+    });
   }
   async captureStyle(styleId: string, photoId?: string|number, strength?: number, extra="", jobId?: string, localMasks?: boolean) {
     if(typeof extra!=="string" || extra.length>8000) throw new Error("附加描述过长");
@@ -163,10 +166,14 @@ export class StudioHost {
       const before=await readFile(path.join(this.store.dir(id),"before.jpg"));
       if(masks.length && !before.equals(await this.renderStable(source.id))) throw new Error("源照片的渲染图已变更，请重新读取并生成方案。");
       try {
+        job.renderCompleted=false;
         job.status="creating-copy";await this.store.save(job);
         const result=await this.lr.call("create_virtual_copies",{photo_ids:[source.id],copy_name:`Studio ${job.id.slice(0,8)}`});
         const copies=result.copies as {copy_id:string|number;photo_id:string|number}[];
-        if(result.created!==1 || !Array.isArray(copies) || copies.length!==1) throw new Error("Lightroom did not return exactly one copy; inspect the catalog before retrying");
+        if(result.created!==1 || !Array.isArray(copies) || copies.length!==1 ||
+          (typeof copies[0]?.copy_id!=="string" && typeof copies[0]?.copy_id!=="number")) {
+          throw new LightroomOutcomeUnknown("protocol_unknown");
+        }
         job.copyId=copies[0].copy_id;
         // Persist the resource identity before the next remote operation.
         await this.store.save(job);
@@ -176,7 +183,7 @@ export class StudioHost {
         job.status="snapshotting";await this.store.save(job);
         const snap=await this.lr.call("create_develop_snapshot",{photo_id:job.copyId,name:`Studio baseline ${job.id}`});
         const snapshot=snap.snapshot as {id?:string};
-        if(typeof snapshot?.id!=="string" || !snapshot.id) throw new Error("Lightroom returned no recovery snapshot ID");
+        if(typeof snapshot?.id!=="string" || !snapshot.id) throw new LightroomOutcomeUnknown("protocol_unknown");
         job.snapshotId=snapshot.id;job.status="applying";await this.store.save(job);
         if(Object.keys(job.settings).length) await this.lr.call("set_develop_settings",{photo_id:copy.id,settings:job.settings});
         if(masks.length) job.maskReadback=await this.applyMasks(copy.id,masks,job.maskBaseline!);
@@ -184,15 +191,21 @@ export class StudioHost {
         job.status="rendering";await this.store.save(job);
         const after=await this.renderStable(job.copyId!);
         if(after.equals(before)) throw new Error("Rendered preview is unchanged; possible stale Lightroom preview");
-        await this.store.file(id,"after.jpg",after);
         if(fingerprint(await this.lr.metadata(source.id))!==job.sourceFingerprint) throw new Error("Source changed during preview; inspect concurrent Lightroom activity");
+        await this.store.file(id,"after.jpg",after);
+        job.renderCompleted=true;
         job.status="previewed";await this.store.save(job);
         return job;
       } catch(error) {
         job.error=String(error);
-        if(job.copyId!==undefined && job.snapshotId) {
+        job.renderCompleted=false;
+        if(error instanceof LightroomOutcomeUnknown) job.outcomeUnknown=error.code;
+        if(!job.outcomeUnknown && job.copyId!==undefined && job.snapshotId) {
           try { await this.recoverCopy(job); }
-          catch(restoreError) { job.recoveryError=String(restoreError); }
+          catch(restoreError) {
+            job.recoveryError=String(restoreError);
+            if(restoreError instanceof LightroomOutcomeUnknown) job.outcomeUnknown=restoreError.code;
+          }
         }
         job.status="failed";await this.store.save(job);throw error;
       }
@@ -202,11 +215,16 @@ export class StudioHost {
     return this.store.lock(id,async()=>{
       const job=await this.store.load(id);
       if(job.copyId===undefined || !job.snapshotId) throw new Error("Job has no recoverable copy/snapshot");
+      job.renderCompleted ??= await hasVerifiedPreview(job,this.store.dir(id));
       job.status="restoring";await this.store.save(job);
       try {
         await this.recoverCopy(job);
-        job.status="restored";job.error=undefined;job.recoveryError=undefined;await this.store.save(job);return job;
-      } catch(error) {job.status="failed";job.recoveryError=String(error);await this.store.save(job);throw error;}
+        job.status="restored";job.error=undefined;job.recoveryError=undefined;job.outcomeUnknown=undefined;await this.store.save(job);return job;
+      } catch(error) {
+        job.status="failed";job.recoveryError=String(error);
+        if(error instanceof LightroomOutcomeUnknown) job.outcomeUnknown=error.code;
+        await this.store.save(job);throw error;
+      }
     });
   }
   private async requireMasks() {

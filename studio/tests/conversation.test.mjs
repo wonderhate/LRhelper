@@ -8,6 +8,7 @@ import {StudioHost} from '../dist/studio-host.js';
 import {WorkbenchServer} from '../dist/workbench-server.js';
 import {StyleLibrary} from '../dist/style-library.js';
 import {parseBatchPhotos} from '../dist/batch-queue.js';
+import {LightroomOutcomeUnknown} from '../dist/lightroom.js';
 
 const proposal=(key='Exposure2012',value=.4)=>({title:'自然海岸',analysis:{target:'目标光线',reference:'参考冷暖',adaptation:'柔和高光与冷暖关系',skin:'保留自然肤色'},scalars:[{key,mode:'delta',value}],curves:[],warnings:[]});
 async function fixture(t,reference=false) {
@@ -105,6 +106,22 @@ test('stale sources are skipped but an uncertain copy creation blocks later writ
   await assert.rejects(f.host.batches.preview(batch.id, () => {}), /批次已停止/);
 });
 
+test('batch stops when a write is unconfirmed even with a known recovery snapshot', async t => {
+  const f = await batchFixture(t);
+  const batch = await f.host.batches.plan(f.style.id, ['1', '2'], undefined, new AbortController().signal, () => {});
+  const call = f.lr.call.bind(f.lr);
+  f.lr.call = async (name, args) => {
+    const reply = await call(name, args);
+    if (name === 'set_develop_settings') throw new LightroomOutcomeUnknown('timeout_unknown');
+    return reply;
+  };
+  const blocked = await f.host.batches.preview(batch.id, () => {});
+  assert.equal(blocked.blockedByPhotoId, '1');
+  assert.deepEqual(f.writes.map(write => write.name), ['create_virtual_copies', 'create_develop_snapshot', 'set_develop_settings']);
+  assert.equal((await f.store.load(blocked.items[0].jobId)).outcomeUnknown, 'timeout_unknown');
+  assert.equal(blocked.items[1].status, 'planned');
+});
+
 test('refinement uses the actual prior render and retains unmentioned settings in a new copy',async t=>{
   const f=await fixture(t),first=await f.host.preview(f.job.id);
   f.model.next=proposal('Saturation',-10);
@@ -141,7 +158,7 @@ test('an older-result branch replays only its own lineage and recomputes carried
 
 test('refinement refuses unrendered or changed source and unavailable inherited capabilities',async t=>{
   const f=await fixture(t);
-  await assert.rejects(f.host.prepareRefinement(f.job.id,'再亮一点'),/先预览/);
+  await assert.rejects(f.host.prepareRefinement(f.job.id,'再亮一点'),/完成上一轮预览/);
   await f.host.preview(f.job.id);const count=f.writes.length;
   f.source.developSettings.Exposure2012=2;
   await assert.rejects(f.host.prepareRefinement(f.job.id,'再亮一点'),/源照片已变更/);
@@ -182,7 +199,7 @@ test('saved reference styles own their image and regenerate against the new targ
 
 test('style validation rejects unpreviewed results, invalid names and path traversal records',async t=>{
   const f=await fixture(t);
-  await assert.rejects(f.host.saveStyle(f.job.id,'name'),/先预览/);
+  await assert.rejects(f.host.saveStyle(f.job.id,'name'),/完成预览/);
   await f.host.preview(f.job.id);
   await assert.rejects(f.host.saveStyle(f.job.id,' '),/名称/);
   const style=await f.host.saveStyle(f.job.id,'文字风格');assert.equal(style.hasReference,false);

@@ -1,4 +1,4 @@
-import type { CallOptions, Dispatcher } from "./dispatcher.js";
+import { BridgeFailure, type BridgeFailureCode, type CallOptions, type Dispatcher } from "./dispatcher.js";
 import { validateToolArgs } from "./validate-args.js";
 import { findDuplicateGroups, type DuplicateGroupArgs } from "./duplicate-groups.js";
 import { getPhotoStats } from "./photo-stats.js";
@@ -28,6 +28,10 @@ export interface ToolResponse {
   content: [TextBlock, ...(TextBlock | ImageBlock)[]];
   isError?: boolean;
   [key: string]: unknown;
+}
+
+export function bridgeErrorResponse(code: BridgeFailureCode, text: string): ToolResponse {
+  return { isError: true, content: [{ type: "text", text }], structuredContent: { code } };
 }
 
 interface ImagePayload {
@@ -87,13 +91,12 @@ export function createCallToolHandler(deps: ToolHandlerDeps) {
       };
     }
 
+    if (options?.signal?.aborted) return bridgeErrorResponse("cancelled", "Request cancelled before sending");
     await deps.settleReadiness?.();
+    if (options?.signal?.aborted) return bridgeErrorResponse("cancelled", "Request cancelled before sending");
 
     if (!deps.isReady()) {
-      return {
-        content: [{ type: "text", text: deps.notReadyMessage?.() ?? NOT_CONNECTED_MESSAGE }],
-        isError: true,
-      };
+      return bridgeErrorResponse("not_sent", deps.notReadyMessage?.() ?? NOT_CONNECTED_MESSAGE);
     }
 
     try {
@@ -124,6 +127,7 @@ export function createCallToolHandler(deps: ToolHandlerDeps) {
       if (region && options?.signal?.aborted) throw new Error("Request cancelled");
       return { content: successContent(region ? cropPreview(resp.result, region) : resp.result) };
     } catch (e) {
+      if (e instanceof BridgeFailure) return bridgeErrorResponse(e.code, e.message);
       return {
         content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
         isError: true,

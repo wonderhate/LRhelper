@@ -169,9 +169,10 @@ describe('broker', () => {
     const resp = await pending;
     expect(resp.isError).toBe(true);
     expect(text(resp)).toBe(OWNER_LOST_MESSAGE);
+    expect(resp.structuredContent).toEqual({ code: 'disconnect_unknown' });
     expect(closed).toBe(true);
     expect(client.isConnected()).toBe(false);
-    expect(text(await client.callTool('ping', {}))).toBe(OWNER_LOST_MESSAGE);
+    expect((await client.callTool('ping', {})).structuredContent).toEqual({ code: 'not_sent' });
     release?.();
   });
 

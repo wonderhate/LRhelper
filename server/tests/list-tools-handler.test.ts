@@ -524,7 +524,6 @@ describe('develop setting schema', () => {
  * probe, deliberately absent from TOOL_CONTRACTS so no MCP client can call them.
  */
 const TEST_ONLY_ACTIONS: Record<string, string> = {
-  set_selection: 'HandlerSelection.setSelection',
 };
 
 describe('local adjustment schema', () => {

@@ -109,13 +109,13 @@ describe('Dispatcher', () => {
 
   it('rejects with timeout if no response arrives within timeoutMs', async () => {
     const promise = dispatcher.call('slow', {});
-    await expect(promise).rejects.toThrow(/timeout/i);
+    await expect(promise).rejects.toMatchObject({ code: 'timeout_unknown', message: expect.stringMatching(/timeout/i) });
     expect(dispatcher.pendingCount()).toBe(0);
   });
 
   it('throws synchronously if send returns false', async () => {
     canSend = false;
-    await expect(dispatcher.call('x', {})).rejects.toThrow(/socket dropped/);
+    await expect(dispatcher.call('x', {})).rejects.toMatchObject({ code: 'not_sent' });
     expect(dispatcher.pendingCount()).toBe(0);
   });
 
@@ -124,9 +124,48 @@ describe('Dispatcher', () => {
     expect(logs.some((l) => l.includes('unknown id'))).toBe(true);
   });
 
-  it('drops malformed JSON without crashing', () => {
-    dispatcher.handleResponseLine('not json {{{');
-    expect(logs.some((l) => l.includes('Bad JSON'))).toBe(true);
+  it.each(['not json SECRET', 'null', '[]', '42'])('rejects invalid envelopes without logging the input (%s)', async frame => {
+    const pending = dispatcher.call('set_develop_settings', {});
+    dispatcher.handleResponseLine(frame);
+    await expect(pending).rejects.toMatchObject({ code: 'protocol_unknown' });
+    expect(dispatcher.pendingCount()).toBe(0);
+    expect(logs.join()).not.toContain(frame);
+  });
+
+  it.each([
+    { error: {} }, { error: 'x', result: {} }, {},
+  ])('rejects a malformed result for the affected request (%p)', async frame => {
+    const first = dispatcher.call('a', {});
+    const second = dispatcher.call('b', {});
+    dispatcher.handleResponseLine(JSON.stringify({ ...frame, id: parseSent(sent[0]).id }));
+    await expect(first).rejects.toMatchObject({ code: 'protocol_unknown' });
+    dispatcher.handleResponseLine(JSON.stringify({ id: parseSent(sent[1]).id, result: 'ok' }));
+    await expect(second).resolves.toMatchObject({ result: 'ok' });
+  });
+
+  it('rejects invalid progress without calling the subscriber', async () => {
+    const onProgress = jest.fn();
+    const pending = dispatcher.call('export_photos', {}, undefined, { onProgress });
+    dispatcher.handleResponseLine(JSON.stringify({
+      progressFor: parseSent(sent[0]).id, progress: { progress: 3, total: 2 },
+    }));
+    await expect(pending).rejects.toMatchObject({ code: 'protocol_unknown' });
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes presend cancellation from disconnect and cleans up active listeners', async () => {
+    const controller = new AbortController();
+    const pending = dispatcher.call('a', {}, undefined, { signal: controller.signal });
+    const other = dispatcher.call('b', {});
+    dispatcher.rejectAll();
+    controller.abort();
+    await Promise.all([
+      expect(pending).rejects.toMatchObject({ code: 'disconnect_unknown' }),
+      expect(other).rejects.toMatchObject({ code: 'disconnect_unknown' }),
+      expect(dispatcher.call('c', {}, undefined, { signal: controller.signal })).rejects.toMatchObject({ code: 'cancelled' }),
+    ]);
+    expect(dispatcher.pendingCount()).toBe(0);
+    expect(sent).toHaveLength(2);
   });
 
   it('cleans up pending map after timeout fires', async () => {

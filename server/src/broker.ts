@@ -14,9 +14,9 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { LineBuffer } from "./line-buffer.js";
+import { LineBuffer, MAX_FRAME_BYTES } from "./line-buffer.js";
 import type { CallOptions, ToolProgress } from "./dispatcher.js";
-import type { ToolResponse } from "./tool-handler.js";
+import { bridgeErrorResponse, type ToolResponse } from "./tool-handler.js";
 
 export type ToolCaller = (name: string, args: unknown, options?: CallOptions) => Promise<ToolResponse>;
 
@@ -36,9 +36,9 @@ interface BrokerReply {
 /** macOS caps sun_path at 104 bytes, Linux at 108. */
 const MAX_UNIX_SOCKET_PATH = 100;
 
-/** Unterminated input past these sizes is a hostile or broken peer. */
+/** Oversized input is a hostile or broken peer. */
 const MAX_HANDSHAKE_BYTES = 1024;
-export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+export { MAX_FRAME_BYTES } from "./line-buffer.js";
 
 export function brokerPath(
   requestPort: number,
@@ -99,11 +99,7 @@ function onLines(sock: net.Socket, handle: (line: string) => void, maxBytes: () 
   const lines = new LineBuffer();
   sock.setEncoding("utf8");
   sock.on("data", (chunk: string) => {
-    lines.push(chunk, handle);
-    if (lines.pendingBytes() > maxBytes()) {
-      lines.clear();
-      sock.destroy();
-    }
+    if (!lines.push(chunk, handle, maxBytes)) sock.destroy();
   });
 }
 
@@ -342,7 +338,10 @@ export class BrokerClient {
     sock.on("error", () => {});
     sock.on("close", () => {
       this.sock = null;
-      for (const pending of this.pending.values()) { pending.cleanup(); pending.resolve(errorResponse(OWNER_LOST_MESSAGE)); }
+      for (const pending of this.pending.values()) {
+        pending.cleanup();
+        pending.resolve(bridgeErrorResponse("disconnect_unknown", OWNER_LOST_MESSAGE));
+      }
       this.pending.clear();
       this.opts.onClose?.();
     });
@@ -372,9 +371,11 @@ export class BrokerClient {
   }
 
   callTool(name: string, args: unknown, options?: CallOptions): Promise<ToolResponse> {
-    if (options?.signal?.aborted) return Promise.resolve(errorResponse("Request cancelled"));
+    if (options?.signal?.aborted) return Promise.resolve(bridgeErrorResponse("cancelled", "Request cancelled before sending"));
     const sock = this.sock;
-    if (!sock) return Promise.resolve(errorResponse(OWNER_LOST_MESSAGE));
+    if (!sock || sock.destroyed || !sock.writable) {
+      return Promise.resolve(bridgeErrorResponse("not_sent", "Lightroom MCP connection unavailable. The request was not sent."));
+    }
     const id = this.nextId++;
     const req: BrokerRequest = {
       id,

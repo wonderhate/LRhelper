@@ -4,11 +4,33 @@ import { maskKinds, maskLimits } from "./grading/masks.js";
 import type { Lightroom, MaskCapabilities, MaskSlider, Photo } from "./types.js";
 import { VERSION } from "./version.js";
 
+export type LightroomUnknownCode = "timeout_unknown" | "disconnect_unknown" | "protocol_unknown";
+
+export class LightroomOutcomeUnknown extends Error {
+  constructor(readonly code: LightroomUnknownCode) {
+    super("Lightroom 请求结果未知。若正在修改照片，请先在 Lightroom 中确认副本和快照状态，再决定是否恢复。");
+  }
+}
+
+function unknownCode(code: unknown, message: string): LightroomUnknownCode | undefined {
+  if (code === "timeout_unknown" || code === "disconnect_unknown" || code === "protocol_unknown") return code;
+  // Another app can own the connection with an earlier bridge version.
+  if (code !== undefined) return undefined;
+  if (/^Plugin response timeout/i.test(message)) return "timeout_unknown";
+  if (/^The Lightroom MCP process that owned the plugin connection exited during this call/i.test(message)) return "disconnect_unknown";
+  return undefined;
+}
+
 export class LightroomClient implements Lightroom {
   private client = new Client({name:"lr-codex-studio",version:VERSION});
   constructor(private readonly serverEntry: string) {}
   async connect() {
-    const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string,string]=>typeof e[1]==="string"));
+    const env: Record<string, string> = {};
+    // The SDK supplies the system environment. Only forward bridge settings and temp locations.
+    for (const key of ["LIGHTROOM_MCP_REQUEST_PORT", "LIGHTROOM_MCP_RESPONSE_PORT", "LIGHTROOM_MCP_TOKEN_PATH", "TMP", "TMPDIR"]) {
+      const value = process.env[key];
+      if (value !== undefined) env[key] = value;
+    }
     await this.client.connect(new StdioClientTransport({command:process.execPath,args:[this.serverEntry],env:{...env,LIGHTROOM_MCP_TOOLSETS:"all",LIGHTROOM_MCP_READ_ONLY:"false"},maxBufferSize:16*1024*1024}));
   }
   async close() { await this.client.close(); }
@@ -46,15 +68,28 @@ export class LightroomClient implements Lightroom {
     return Object.keys(sliders).length ? Object.fromEntries(maskKinds.filter(kind=>create?.properties?.type?.enum?.includes(kind)).map(kind=>[kind,sliders])) : {};
   }
   private async result(name: string,args: Record<string,unknown>) {
-    const response=await this.client.callTool({name,arguments:args},{timeout:360000});
-    if(response.isError) throw new Error(response.content.filter(c=>c.type==="text").map(c=>c.text).join("\n"));
+    const response=await this.client.callTool({name,arguments:args},{timeout:360000}).catch(() => {
+      throw new LightroomOutcomeUnknown("disconnect_unknown");
+    });
+    if(response.isError) {
+      const message=response.content.filter(c=>c.type==="text").map(c=>c.text).join("\n");
+      const details=response.structuredContent;
+      const code=unknownCode(details && typeof details==="object" && "code" in details ? details.code : undefined,message);
+      if(code) throw new LightroomOutcomeUnknown(code);
+      throw new Error(message);
+    }
     return response;
   }
   async call(name: string,args: Record<string,unknown>): Promise<Record<string,unknown>> {
     const result=await this.result(name,args);
     const text=result.content.find(c=>c.type==="text");
-    const data=result.structuredContent ?? (text?.type==="text" ? JSON.parse(text.text) : undefined);
-    if(!data || typeof data!=="object" || Array.isArray(data)) throw new Error(`Invalid MCP response: ${name}`);
+    let data: unknown = result.structuredContent;
+    try {
+      if(data===undefined && text?.type==="text") data=JSON.parse(text.text);
+    } catch {
+      throw new LightroomOutcomeUnknown("protocol_unknown");
+    }
+    if(!data || typeof data!=="object" || Array.isArray(data)) throw new LightroomOutcomeUnknown("protocol_unknown");
     if((data as Record<string,unknown>).success===false) throw new Error(`Lightroom operation failed: ${name}`);
     return data as Record<string,unknown>;
   }

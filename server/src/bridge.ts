@@ -1,7 +1,7 @@
 import { BrokerClient, BrokerServer, type ToolCaller } from "./broker.js";
 import { LockHeldError, type InstanceLock } from "./instance-lock.js";
 import type { CallOptions } from "./dispatcher.js";
-import type { ToolResponse } from "./tool-handler.js";
+import { bridgeErrorResponse, type ToolResponse } from "./tool-handler.js";
 
 export interface Leader {
   callTool: ToolCaller;
@@ -93,7 +93,7 @@ export class Bridge {
   }
 
   private noOwnerResponse(): ToolResponse {
-    return { content: [{ type: "text", text: this.noOwnerMessage() }], isError: true };
+    return bridgeErrorResponse("not_sent", this.noOwnerMessage());
   }
 
   private noOwnerMessage(): string {

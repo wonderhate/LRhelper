@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile, rename, open, unlink, access, readdir } from "node:fs/promises";
+import { mkdir, writeFile, readFile, rename, open, unlink, access, readdir, lstat } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Job } from "./types.js";
@@ -32,7 +32,22 @@ export class JobStore {
   async lock<T>(id: string, fn:()=>Promise<T>): Promise<T> {
     return withOperationLock(this.dir(id),fn);
   }
-  async file(id: string, name: string, data: Buffer) { await writeFile(path.join(this.dir(id),name),data,{mode:0o600}); }
+  async file(id: string, name: string, data: Buffer) {
+    const file=path.join(this.dir(id),name), temp=`${file}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temp,data,{mode:0o600});
+      await rename(temp,file);
+    } finally {
+      await unlink(temp).catch(() => {});
+    }
+  }
+}
+
+export async function hasVerifiedPreview(job: Job, directory: string): Promise<boolean> {
+  if (!job.plan || job.renderCompleted === false || (job.status !== "previewed" && job.status !== "restored")) return false;
+  // Existing jobs predate renderCompleted. Require their successfully published file.
+  const artifact = await lstat(path.join(directory, "after.jpg")).catch(() => undefined);
+  return !!artifact?.isFile() && artifact.size > 0;
 }
 export async function withOperationLock<T>(directory: string, fn: () => Promise<T>): Promise<T> {
   const lockFile = path.join(directory, "operation.lock");

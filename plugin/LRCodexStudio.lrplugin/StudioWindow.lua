@@ -135,7 +135,11 @@ function Window.show()
                     if reason and job.error and reason ~= job.error then
                         table.insert(lines, '任务记录：' .. job.error)
                     end
-                    if job.recoveryError then
+                    if job.outcomeUnknown then
+                        table.insert(lines, 1, 'Lightroom 可能仍在执行请求。请先检查副本和快照，再决定是否恢复。')
+                        if job.copyId then table.insert(lines, 2, '副本 ID：' .. job.copyId) end
+                        if job.recoveryError and job.recoveryError ~= reason then table.insert(lines, '恢复记录：' .. job.recoveryError) end
+                    elseif job.recoveryError then
                         table.insert(lines, 1, '副本自动恢复失败，可能仍保留调整。')
                         table.insert(lines, 2, '需要恢复的副本 ID：' .. tostring(job.copyId or '未知'))
                         table.insert(lines, '恢复错误：' .. job.recoveryError)
@@ -145,11 +149,14 @@ function Window.show()
                 end
 
                 local function failureStatus(job)
+                    if job.outcomeUnknown then return 'Lightroom 请求结果未知。请先在 Lightroom 中检查副本。' end
                     return job.recoveryError and '副本自动恢复失败，请先恢复副本并查看错误详情。' or '任务未完成，请查看“分析与适配”中的原因后重试。'
                 end
 
                 local function resumeStatus(job)
                     if job.status == 'failed' then return failureStatus(job) end
+                    if job.status == 'restored' and not job.canRefine then return '副本已恢复。本轮没有可用的预览，可重新生成方案。' end
+                    if job.status == 'previewed' and not job.canRefine then return '上次预览文件不可用，可重新生成方案。' end
                     if job.status == 'planned' and not hasChanges(job) then return '当前方案无参数变化。可以修改描述或强度后重新生成。' end
                     local states = {
                         captured = '已载入照片：选择调色方式并生成方案。',
@@ -175,7 +182,9 @@ function Window.show()
                     p.afterPath = job.afterPath ~= '' and LrFileUtils.exists(job.afterPath) and job.afterPath or ''
                     if p.afterPath ~= '' then
                         p.afterTitle = job.status == 'restored' and '上次预览（副本已恢复）' or '副本预览'
-                    elseif job.status == 'previewed' or job.status == 'restored' then
+                    elseif job.status == 'restored' then
+                        p.afterTitle = '本轮没有可用的预览'
+                    elseif job.status == 'previewed' then
                         p.afterTitle = '副本预览（文件不可用）'
                     elseif job.status == 'planned' and hasChanges(job) then
                         p.afterTitle = '副本预览（方案待预览）'
@@ -461,7 +470,7 @@ function Window.show()
                                         end
                                     end
                                 elseif action == 'preview' then p.status = '预览已生成：请比较左右图。仅新虚拟副本被修改。'
-                                elseif action == 'restore' then p.status = '副本已恢复。右图保留上次预览供比较。'
+                                elseif action == 'restore' then p.status = resumeStatus(result)
                                 elseif action == 'save-style' then p.status = '风格已保存：' .. body.name
                                 elseif action == 'generate' or action == 'refine' or action == 'apply-style' then
                                     p.status = resumeStatus(result)

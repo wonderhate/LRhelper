@@ -837,8 +837,8 @@ describe('validateToolArgs', () => {
     expect(msg).toContain('object');
   });
 
-  it('leaves unknown tool names to the dispatcher', () => {
-    expect(validateToolArgs('no_such_tool', { anything: true })).toBeNull();
+  it('rejects unknown tool names before dispatch', () => {
+    expect(validateToolArgs('no_such_tool', { anything: true })).toContain('Unknown tool');
   });
 });
 

@@ -108,14 +108,7 @@ Goal: `get_selected_photos` actually reflects the filmstrip selection.
 **Steps**
 
 1. Pick three ids: `node tests/e2e/mcp-runner.mjs tool search_photos '{"limit":3}'`
-2. Stage the selection without touching Lightroom:
-   ```sh
-   node manual-test.mjs set_selection '{"photo_ids":[<id0>,<id1>,<id2>]}'
-   ```
-   `set_selection` is a **test-only** plugin action — it has no MCP tool contract,
-   so it is reachable from `manual-test.mjs` only, never from an MCP client. It
-   returns `{ selected, active, missing }`; `active` is the first id, which
-   becomes Lightroom's active photo.
+2. Select the three photos in the marked test catalog's filmstrip, with the first photo active.
 3. Run:
    ```sh
    node tests/e2e/mcp-runner.mjs tool get_selected_photos '{"limit":10}'

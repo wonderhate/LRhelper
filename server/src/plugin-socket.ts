@@ -1,11 +1,12 @@
 import net from "node:net";
-import { LineBuffer } from "./line-buffer.js";
+import { LineBuffer, MAX_FRAME_BYTES } from "./line-buffer.js";
 
 export interface PluginSocketOptions {
   port: number;
   label: string;
   host?: string;
   reconnectDelayMs?: number;
+  maxFrameBytes?: number;
   onLine?: (line: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -23,6 +24,7 @@ export class PluginSocket {
   private readonly host: string;
   private readonly label: string;
   private readonly reconnectDelayMs: number;
+  private readonly maxFrameBytes: number;
   private readonly onLine?: (line: string) => void;
   private readonly onConnect?: () => void;
   private readonly onDisconnect?: () => void;
@@ -33,6 +35,7 @@ export class PluginSocket {
     this.label = opts.label;
     this.host = opts.host ?? "127.0.0.1";
     this.reconnectDelayMs = opts.reconnectDelayMs ?? 1000;
+    this.maxFrameBytes = opts.maxFrameBytes ?? MAX_FRAME_BYTES;
     this.onLine = opts.onLine;
     this.onConnect = opts.onConnect;
     this.onDisconnect = opts.onDisconnect;
@@ -52,7 +55,10 @@ export class PluginSocket {
     });
 
     sock.on("data", (chunk: string) => {
-      if (this.onLine) this.lines.push(chunk, this.onLine);
+      if (this.onLine && !this.lines.push(chunk, this.onLine, () => this.maxFrameBytes)) {
+        this.log(`[${this.label}] response frame exceeds the byte limit`);
+        sock.destroy();
+      }
     });
 
     sock.on("error", (err: NodeJS.ErrnoException) => {
@@ -83,7 +89,7 @@ export class PluginSocket {
   }
 
   send(line: string): boolean {
-    if (!this.socket || !this.connected) return false;
+    if (!this.socket || !this.connected || this.socket.destroyed || !this.socket.writable) return false;
     this.socket.write(line + "\n");
     return true;
   }

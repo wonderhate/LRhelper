@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { PluginSocket } from "./plugin-socket.js";
 import { Dispatcher } from "./dispatcher.js";
-import { readToken, tokenFilePath } from "./token.js";
+import { readToken } from "./token.js";
 import { requestPort, responsePort } from "./ports.js";
 import { parseToolsets, type Toolset } from "./toolsets.js";
 import { parseReadOnly } from "./read-only.js";
@@ -142,7 +142,6 @@ async function main() {
 
   console.error(`Lightroom MCP server v${VERSION} running on stdio`);
   console.error(`Connecting to plugin: request :${REQUEST_PORT}, response :${RESPONSE_PORT}`);
-  console.error(`Token file: ${tokenFilePath()}`);
 }
 
 function tryReadToken(): string | null {
@@ -197,6 +196,11 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
       label: "response",
       onLine: (line) => dispatcher.handleResponseLine(line),
       onConnect: () => probeOnConnect(),
+      onDisconnect: () => {
+        liveness.reset();
+        unresponsive.clear();
+        dispatcher.rejectAll();
+      },
     });
     responseSocket.connect();
   };
@@ -222,6 +226,7 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
     },
     onDisconnect: () => {
       stopResponseSocket();
+      dispatcher.rejectAll();
     },
   });
   requestSocket.connect();
@@ -273,6 +278,7 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
       if (recoveryTimer) clearInterval(recoveryTimer);
       stopResponseSocket();
       requestSocket.stop();
+      dispatcher.rejectAll();
     },
   };
 }

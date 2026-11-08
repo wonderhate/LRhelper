@@ -370,7 +370,7 @@ describe('createCallToolHandler', () => {
     const handler = makeHandler({
       call: async () => ({ id: '1', error: 'Unknown action' }),
     });
-    const result = await handler('bogus', {});
+    const result = await handler('list_collections', {});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('Error: Unknown action');
   });
@@ -381,7 +381,7 @@ describe('createCallToolHandler', () => {
         throw new Error('Plugin response timeout (30s)');
       },
     });
-    const result = await handler('x', {});
+    const result = await handler('list_collections', {});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('Plugin response timeout (30s)');
   });
@@ -392,7 +392,7 @@ describe('createCallToolHandler', () => {
         throw 'raw string';
       },
     });
-    const result = await handler('x', {});
+    const result = await handler('list_collections', {});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('raw string');
   });

@@ -241,9 +241,6 @@ local DISPATCH = {
     export_photos = HandlerExport.exportPhotos,
     export_photo_metadata = HandlerExport.exportPhotoMetadata,
     get_selected_photos = HandlerSelection.getSelectedPhotos,
-    -- Test-only, no matching MCP tool contract: only the raw TCP probe
-    -- (manual-test.mjs / the e2e playbook) can reach it. See HandlerSelection.
-    set_selection = HandlerSelection.setSelection,
     list_develop_presets = HandlerDevelop.listDevelopPresets,
     get_develop_preset = HandlerDevelop.getDevelopPreset,
     compare_develop_presets = HandlerDevelop.compareDevelopPresets,
@@ -372,8 +369,7 @@ local function dispatchAction(request)
     local params = request.params or {}
 
     if request.undecodable then
-        addLog("Rejecting undecodable request id=" .. tostring(id))
-        sendResponse({ id = id, error = "Malformed request: " .. request.undecodable })
+        sendResponse({ id = id, error = "Malformed request" })
         return
     end
 
@@ -382,10 +378,6 @@ local function dispatchAction(request)
     -- 100-line ring buffer used by the status panel and drown out real
     -- request activity.
     local isHeartbeat = (action == "ping")
-    if not isHeartbeat then
-        addLog("Request id=" .. tostring(id) .. " action=" .. tostring(action))
-    end
-
     -- Tracked so the stale-connection monitor can defer a restart while a
     -- real request is in flight. Held through sendResponse (not just the
     -- handler call) so the monitor can't yank the socket while a response
@@ -394,10 +386,11 @@ local function dispatchAction(request)
 
     local handler = DISPATCH[action]
     if not handler then
-        sendResponse({ id = id, error = "Unknown action: " .. tostring(action) })
+        sendResponse({ id = id, error = "Unknown action" })
         pluginState.inFlightRequests = math.max(0, pluginState.inFlightRequests - 1)
         return
     end
+    if not isHeartbeat then addLog("Request action=" .. action) end
 
     -- xpcall, debug.traceback, and os.getenv aren't reliably exposed by
     -- Lightroom's Lua sandbox: using them in the dispatcher's error path
@@ -426,13 +419,13 @@ local function dispatchAction(request)
     end)
     activeRequests[id] = nil
     if context then
-        if context:isCanceled() then addLog("Cancelled " .. action .. " id=" .. tostring(id)) end
+        if context:isCanceled() then addLog("Cancelled " .. action) end
         context.scope:done()
     end
     if execOk then
         sendResponse({ id = id, result = resultOrErr })
     else
-        addLog("Handler " .. action .. " error: " .. tostring(resultOrErr))
+        addLog("Handler " .. action .. " failed")
         local message = tostring(resultOrErr)
         local source, detail = message:match("^([^\r\n]-%.lua):%d+: (.*)$")
         if source and (source:match("^%S+%.lua$") or source:match("^[/\\]")
@@ -456,15 +449,16 @@ local function consumeMessage(message)
 
     local parsedOk, request = pcall(function() return JSON:decode(message) end)
     if not parsedOk or type(request) ~= "table" then
-        addLog("JSON decode failed: " .. tostring(message))
+        addLog("JSON decode failed")
         -- A client that cannot be decoded still deserves an answer, or it sits
         -- there until its own 30s timeout with no clue why. Salvage id+token by
         -- pattern: only an authenticated caller gets the error back, so
         -- unauthenticated garbage stays silent as before.
         local salvagedToken = message:match('"hello"%s*:%s*"([^"]*)"')
         local salvagedId = message:match('"id"%s*:%s*"([^"]*)"')
-        if salvagedId and pluginState.token and salvagedToken == pluginState.token then
-            return { id = salvagedId, undecodable = tostring(request) }
+        if salvagedId and #salvagedId <= 64 and salvagedId:match("^[%w_-]+$")
+            and pluginState.token and salvagedToken == pluginState.token then
+            return { id = salvagedId, undecodable = true }
         end
         return nil
     end
@@ -473,7 +467,7 @@ local function consumeMessage(message)
         -- Drop silently. We CANNOT call sendResponse here: onMessage runs
         -- in a non-yielding context and sendResponse uses LrTasks.sleep.
         -- Server will time out, which is correct behaviour for auth fail.
-        addLog("Auth failed (token mismatch) id=" .. tostring(request.id))
+        addLog("Auth failed (token mismatch)")
         return nil
     end
 

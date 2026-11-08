@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile, rename, readdir } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { checkImage, type JobStore } from "./job-store.js";
+import { checkImage, hasVerifiedPreview, type JobStore } from "./job-store.js";
 import type { GradePlan, Job, Settings } from "./types.js";
 import { canExportXmp, exportStyleXmp } from "./xmp-preset.js";
 
@@ -46,7 +46,7 @@ export class StyleLibrary {
   }
   async save(job: Job, chain: Job[], name: string, store: JobStore) {
     if(typeof name!=="string" || !name.trim() || name.trim().length>80) throw new Error("风格名称需要 1–80 个字符");
-    if(!job.plan || !["previewed","restored"].includes(job.status)) throw new Error("请先预览结果，再保存风格");
+    if(!job.plan || !await hasVerifiedPreview(job,store.dir(job.id))) throw new Error("请先完成预览，再保存风格");
     const directions=chain.map((turn,index)=>`${index===0 ? "初始意图" : "继续调整"}：${turn.request.prompt || "根据目标照片选择自然、克制的调色"}`);
     const intent=[...directions,`适配思路：${job.plan.analysis.adaptation}`,`肤色原则：${job.plan.analysis.skin}`].join("\n");
     if(intent.length>20000) throw new Error("风格意图过长，请以简短描述重新开始会话后保存");

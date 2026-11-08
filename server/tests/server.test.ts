@@ -127,10 +127,21 @@ describe('read-only mode', () => {
     pair = await connect({ readOnly: true, call });
     const names = TOOL_CONTRACTS.filter((tool) => !tool.annotations.readOnlyHint || tool.toolset !== 'core')
       .map((tool) => tool.name);
-    for (const name of [...names, 'set_rating', 'set_selection', 'not_a_tool']) {
+    for (const name of names) {
       const result = asToolResult(await pair.client.callTool({ name, arguments: {} }));
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('LIGHTROOM_MCP_READ_ONLY');
+    }
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('rejects unlisted tool names before dispatch with readOnly=%p', async (readOnly) => {
+    const call = jest.fn<CallFn>();
+    pair = await connect({ readOnly, toolsets: 'all', call });
+    for (const name of ['set_rating', 'set_selection', 'not_a_tool']) {
+      const result = asToolResult(await pair.client.callTool({ name, arguments: {} }));
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Unknown tool');
     }
     expect(call).not.toHaveBeenCalled();
   });

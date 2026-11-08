@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import net from 'node:net';
 import { PluginSocket } from '../src/plugin-socket.js';
+import { Dispatcher } from '../src/dispatcher.js';
 
 function freePort(): Promise<number> {
   return new Promise((resolve) => {
@@ -102,6 +103,26 @@ describe('PluginSocket', () => {
 
     await waitFor(() => lines.length >= 2);
     expect(lines).toEqual(['{"id":"1","result":42}', '{"id":"2","result":"x"}']);
+  });
+
+  it.each(['', '\n'])('closes on oversized frames, including terminated frames (%j)', async terminator => {
+    const dispatcher = new Dispatcher({ send: () => true, getToken: () => '', timeoutMs: 60_000 });
+    const onLine = jest.fn<(line: string) => void>();
+    server = net.createServer(conn => { serverConn = conn; });
+    await new Promise<void>(resolve => server!.listen(port, '127.0.0.1', resolve));
+    socket = new PluginSocket({
+      port, label: 'test', maxFrameBytes: 8, reconnectDelayMs: 60_000, onLine,
+      onDisconnect: () => dispatcher.rejectAll(), log: () => {},
+    });
+    socket.connect();
+    await waitFor(() => socket!.isConnected() && !!serverConn);
+
+    const pending = dispatcher.call('set_develop_settings', {});
+    serverConn!.write('éééé');
+    serverConn!.write('é' + terminator);
+    await expect(pending).rejects.toMatchObject({ code: 'disconnect_unknown' });
+    expect(onLine).not.toHaveBeenCalled();
+    expect(socket.isConnected()).toBe(false);
   });
 
   it('reconnects after the plugin closes the connection', async () => {

@@ -170,7 +170,7 @@ export class BatchQueue {
           item.previewError = String(error);
           // An uncertain catalog write or failed rollback needs review before further writes.
           const job = await this.readItem(item).catch(() => undefined);
-          if (!job || job.recoveryError || (job.status !== "planned" && !job.snapshotId)) batch.blockedByPhotoId = item.photoId;
+          if (!job || job.outcomeUnknown || job.recoveryError || (job.status !== "planned" && !job.snapshotId)) batch.blockedByPhotoId = item.photoId;
           await this.save(batch);
           if (batch.blockedByPhotoId) break;
         }

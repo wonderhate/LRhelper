@@ -15,6 +15,32 @@ export interface PluginResponse {
   error?: string;
 }
 
+export type BridgeFailureCode = "not_sent" | "cancelled" | "timeout_unknown" | "disconnect_unknown" | "protocol_unknown";
+
+export class BridgeFailure extends Error {
+  constructor(readonly code: BridgeFailureCode, message: string) {
+    super(message);
+  }
+}
+
+const disconnected = () => new BridgeFailure("disconnect_unknown",
+  "Lightroom connection closed during the request. Its result is unknown. Check Lightroom before retrying a write.");
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isProgress(value: unknown): value is ToolProgress {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const { progress, total, message } = value as Record<string, unknown>;
+  return isCount(progress) && (total === undefined || (isCount(total) && total >= progress))
+    && (message === undefined || typeof message === "string");
+}
+
+function isRequestId(value: unknown): value is string {
+  return typeof value === "string" && /^req_\d{1,16}_\d{1,16}$/.test(value);
+}
+
 interface PendingResponse {
   resolve: (resp: PluginResponse) => void;
   reject: (err: Error) => void;
@@ -57,28 +83,64 @@ export class Dispatcher {
   }
 
   handleResponseLine(line: string): void {
-    let resp: PluginResponse;
+    let decoded: unknown;
     try {
-      resp = JSON.parse(line) as PluginResponse;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log(`Bad JSON from plugin (${msg}): ${line}`);
+      decoded = JSON.parse(line);
+    } catch {
+      this.rejectMalformed("Bad JSON from plugin");
       return;
     }
-    const event = resp as unknown as { progressFor?: string; progress?: ToolProgress };
-    if (event.progressFor && event.progress) {
-      this.pending.get(event.progressFor)?.onProgress?.(event.progress);
+    if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+      this.rejectMalformed("Invalid response envelope from plugin");
       return;
     }
-    const p = this.pending.get(resp.id);
-    if (!p) {
-      this.log(`Response for unknown id: ${resp.id}`);
+    const frame = decoded as Record<string, unknown>;
+    if ("progressFor" in frame || "progress" in frame) {
+      if (!isRequestId(frame.progressFor) || !isProgress(frame.progress) ||
+          "id" in frame || "result" in frame || "error" in frame) {
+        this.rejectMalformed("Invalid progress envelope from plugin", frame.progressFor);
+        return;
+      }
+      this.pending.get(frame.progressFor)?.onProgress?.(frame.progress);
       return;
     }
-    clearTimeout(p.timer);
-    p.cleanup();
-    this.pending.delete(resp.id);
-    p.resolve(resp);
+    if (!isRequestId(frame.id)) {
+      this.rejectMalformed("Response for unknown id or invalid id from plugin");
+      return;
+    }
+    const hasResult = Object.hasOwn(frame, "result");
+    const hasError = Object.hasOwn(frame, "error");
+    if (hasResult === hasError || (hasError && (typeof frame.error !== "string" || !frame.error.trim()))) {
+      this.rejectMalformed("Invalid result envelope from plugin", frame.id);
+      return;
+    }
+    const pending = this.takePending(frame.id);
+    if (!pending) {
+      this.log("Response for unknown id from plugin");
+      return;
+    }
+    pending.resolve(hasError ? { id: frame.id, error: frame.error as string } : { id: frame.id, result: frame.result });
+  }
+
+  private takePending(id: string): PendingResponse | undefined {
+    const pending = this.pending.get(id);
+    if (pending) {
+      this.pending.delete(id);
+      clearTimeout(pending.timer);
+      pending.cleanup();
+    }
+    return pending;
+  }
+
+  private rejectMalformed(description: string, id?: unknown): void {
+    this.log(description);
+    const error = new BridgeFailure("protocol_unknown", "Invalid Lightroom response. The request result is unknown.");
+    if (isRequestId(id)) this.takePending(id)?.reject(error);
+    else this.rejectAll(error);
+  }
+
+  rejectAll(error: BridgeFailure = disconnected()): void {
+    for (const id of this.pending.keys()) this.takePending(id)?.reject(error);
   }
 
   async call(action: string, params: unknown, timeoutOverrideMs?: number, options?: CallOptions): Promise<PluginResponse> {
@@ -88,43 +150,37 @@ export class Dispatcher {
     const override = timeoutOverrideMs ?? this.actionTimeoutsMs[action];
     const timeoutMs = override !== undefined && override > 0 ? override : this.timeoutMs;
 
-    if (options?.signal?.aborted) throw new Error("Request cancelled");
+    if (options?.signal?.aborted) throw new BridgeFailure("cancelled", "Request cancelled before sending");
+    let payload: string;
+    try {
+      payload = JSON.stringify({ hello: this.getToken(), id, action, params: params ?? {}, reportProgress: Boolean(options?.onProgress) });
+    } catch {
+      throw new BridgeFailure("not_sent", "Could not prepare the request to Lightroom");
+    }
     const cancel = () => {
       if (this.pending.has(id)) {
-        this.send(JSON.stringify({ hello: this.getToken(), action: "cancel", params: { request_id: id } }));
+        try {
+          this.send(JSON.stringify({ hello: this.getToken(), action: "cancel", params: { request_id: id } }));
+        } catch {
+          this.log("Could not send Lightroom cancellation request");
+        }
       }
     };
-    const responsePromise = new Promise<PluginResponse>((resolve, reject) => {
+    return new Promise<PluginResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
-        options?.signal?.removeEventListener("abort", cancel);
-        this.pending.delete(id);
-        reject(new Error(`Plugin response timeout (${timeoutMs / 1000}s)`));
+        this.takePending(id)?.reject(new BridgeFailure("timeout_unknown",
+          `Plugin response timeout (${timeoutMs / 1000}s). The request result is unknown.`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer, onProgress: options?.onProgress,
         cleanup: () => options?.signal?.removeEventListener("abort", cancel) });
       options?.signal?.addEventListener("abort", cancel, { once: true });
+      try {
+        if (!this.send(payload)) this.takePending(id)?.reject(new BridgeFailure("not_sent",
+          "Failed to send request to plugin (socket dropped)"));
+      } catch {
+        this.takePending(id)?.reject(disconnected());
+      }
     });
-
-    const cleanup = () => {
-      const p = this.pending.get(id);
-      if (p) { clearTimeout(p.timer); p.cleanup(); }
-      this.pending.delete(id);
-    };
-
-    let payload: string;
-    try {
-      payload = JSON.stringify({ hello: this.getToken(), id, action, params: params ?? {}, reportProgress: Boolean(options?.onProgress) });
-    } catch (err) {
-      cleanup();
-      throw err;
-    }
-
-    if (!this.send(payload)) {
-      cleanup();
-      throw new Error("Failed to send request to plugin (socket dropped)");
-    }
-
-    return responsePromise;
   }
 
   pendingCount(): number {

@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {JobStore} from '../dist/job-store.js';
 import {StudioHost} from '../dist/studio-host.js';
+import {LightroomOutcomeUnknown} from '../dist/lightroom.js';
+import {jobView} from '../dist/workbench-server.js';
 
 const plan={title:'柔和',analysis:{target:'阴天',reference:'无',adaptation:'提亮目标',skin:'保留'},scalars:[{key:'Exposure2012',mode:'delta',value:0.4}],curves:[],warnings:[]};
 async function setup(t) {
@@ -54,6 +56,7 @@ test('planning has no write calls; preview only writes verified copy and can res
   assert.equal((await readFile(path.join(f.store.dir(job.id),'after.jpg'))).toString(),'render:1.2');
   await assert.rejects(f.host.preview(job.id),/unapplied/);
   assert.equal((await f.host.restore(job.id)).status,'restored');assert.equal(f.photos.get(2).developSettings.exposure,1);
+  assert.equal((await jobView(await f.store.load(job.id),f.host)).canRefine,true);
 });
 test('source edits made while model was running prevent preview before copy creation',async t=>{
   const f=await setup(t),job=await f.capture();await f.host.plan(job.id);
@@ -80,6 +83,28 @@ test('failed automatic recovery preserves its error and allows explicit later re
   const f=await setup(t),job=await f.capture();await f.host.plan(job.id);f.lr.failWrite=true;f.lr.failRollback=true;
   await assert.rejects(f.host.preview(job.id));assert.match((await f.store.load(job.id)).recoveryError,/rollback failed/);
   f.lr.failRollback=false;assert.equal((await f.host.restore(job.id)).status,'restored');
+  const view=await jobView(await f.store.load(job.id),f.host);
+  assert.equal(view.canRefine,false);assert.equal(view.afterPath,'');
+  await assert.rejects(f.host.prepareRefinement(job.id,'更暖'),/完成上一轮预览/);
+  await assert.rejects(f.host.saveStyle(job.id,'柔和'),/完成预览/);
+});
+test('a lost write acknowledgement preserves the recovery point without a second write',async t=>{
+  const f=await setup(t),job=await f.capture();await f.host.plan(job.id);
+  const call=f.lr.call.bind(f.lr);
+  f.lr.call=async (name,args)=>{
+    const result=await call(name,args);
+    if(name==='set_develop_settings') throw new LightroomOutcomeUnknown('disconnect_unknown');
+    return result;
+  };
+  await assert.rejects(f.host.preview(job.id),/请求结果未知/);
+  const interrupted=await f.store.load(job.id);
+  assert.equal(interrupted.outcomeUnknown,'disconnect_unknown');
+  assert.equal(interrupted.copyId,2);assert.equal(interrupted.snapshotId,'snapshot-1');
+  assert.equal(f.calls.some(c=>c.name==='apply_develop_snapshot'),false);
+  assert.equal(f.photos.get(2).developSettings.exposure,1.2);
+  const restored=await f.host.restore(job.id);
+  assert.equal(restored.outcomeUnknown,undefined);assert.equal(restored.renderCompleted,false);
+  assert.equal(f.photos.get(2).developSettings.exposure,1);
 });
 test('job lock prevents duplicate side effects across concurrent preview requests',async t=>{
   const f=await setup(t),job=await f.capture();await f.host.plan(job.id);

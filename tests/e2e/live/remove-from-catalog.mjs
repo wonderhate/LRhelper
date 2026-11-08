@@ -3,14 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import { openLiveSession, requireFixtureId } from "./lib/live-catalog.mjs";
 import { requireThrowawayCatalog } from "./lib/catalog-guard.mjs";
-import { McpSession } from "./lib/mcp.mjs";
-import { REPO_ROOT } from "./lib/paths.mjs";
 
-const { marker, catalogPath, session: initialSession } = await openLiveSession();
-let session = initialSession;
+const { marker, catalogPath, session } = await openLiveSession();
 const disposableDirectory = path.join(path.dirname(catalogPath), `remove-check-${randomUUID()}`);
 const survivorId = requireFixtureId(marker, "wide_plain");
 const source = marker.fixtures.wide_plain.path;
@@ -28,12 +25,12 @@ try {
     assert.ok(photo, `imported copy missing: ${file}`);
     copies.push({ id: photo.id, file });
   }
-  await session.stop();
-  const output = execFileSync(process.execPath, [path.join(REPO_ROOT, "manual-test.mjs"),
-    "set_selection", JSON.stringify({ photo_ids: [survivorId, copies[0].id] })], { encoding: "utf8" });
-  const response = JSON.parse(output.slice(output.lastIndexOf("<<<") + 3));
-  assert.equal(response.result.selected, 2);
-  session = await new McpSession().start();
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    await prompt.question(`In the marked test catalog, select only ${source} and ${copies[0].file}, then press Enter.\n`);
+  } finally {
+    prompt.close();
+  }
   const selectionBefore = await session.toolOrThrow("get_selected_photos");
   assert.deepEqual(new Set(selectionBefore.data.photos.map((photo) => String(photo.id))),
     new Set([survivorId, copies[0].id].map(String)));

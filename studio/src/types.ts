@@ -1,3 +1,5 @@
+import type { LightroomUnknownCode } from "./lightroom.js";
+
 export type Settings = Record<string, number | string | boolean | number[]>;
 export type Mode = "describe" | "reference" | "lucky";
 export interface GradeRequest {
@@ -59,6 +61,8 @@ export interface Job {
   readback?: Settings;
   error?: string;
   recoveryError?: string;
+  renderCompleted?: boolean;
+  outcomeUnknown?: LightroomUnknownCode;
   parentJobId?: string;
   conversationId?: string;
   revision?: number;

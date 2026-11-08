@@ -8,13 +8,14 @@ import type { StudioHost } from "./studio-host.js";
 import { parseBatchPhotos, type BatchView } from "./batch-queue.js";
 import { defaultHostFile } from "./configuration.js";
 import { VERSION } from "./version.js";
+import { hasVerifiedPreview } from "./job-store.js";
 
 interface Task {
   id: string;
   state: "running" | "completed" | "failed";
   stage: "capture" | "generate" | "preview" | "restore" | "refine" | "save-style" | "apply-style" | "batch-plan" | "batch-preview";
   cancellable: boolean;
-  job?: ReturnType<typeof jobView>;
+  job?: Awaited<ReturnType<typeof jobView>>;
   batch?: BatchView;
   error?: string;
 }
@@ -43,8 +44,9 @@ function describeDiff(changes: Diff[]) {
   }).join("\n");
 }
 
-export function jobView(job: Job, host: StudioHost) {
+export async function jobView(job: Job, host: StudioHost) {
   const dir = host.store.dir(job.id);
+  const canRefine = await hasVerifiedPreview(job, dir);
   const sliderLabels={exposure:"曝光",highlights:"高光",shadows:"阴影",saturation:"饱和度"};
   const maskLines=(job.masks ?? []).map(mask=>{
     const values=mask.adjustments.map(({key,value})=>`${sliderLabels[key]} ${value>0 ? "+" : ""}${value}`).join("，");
@@ -63,7 +65,7 @@ export function jobView(job: Job, host: StudioHost) {
     request: job.request, hasPlan: !!job.plan,
     copyId: job.copyId === undefined ? undefined : String(job.copyId),
     conversationId:job.conversationId ?? job.id,revision:job.revision ?? 1,parentJobId:job.parentJobId,
-    canRefine:!!job.plan && ["previewed","restored"].includes(job.status),styleName:job.styleName,
+    canRefine,styleName:job.styleName,
     canRestore: job.copyId !== undefined && !!job.snapshotId,
     title: job.plan?.title ?? "照片已读取",
     analysis: analysis ? [...Object.values(analysis), ...plan.warnings].filter(Boolean).join("\n\n") : sections,
@@ -75,9 +77,9 @@ export function jobView(job: Job, host: StudioHost) {
     stepDiff:(job.stepDiff ?? job.diff ?? []).map(d=>`${d.key}: ${JSON.stringify(d.before)} → ${JSON.stringify(d.after)}`).join("\n"),
     displayStepDiff:describeDiff(job.stepDiff ?? job.diff ?? []),
     beforePath: path.join(dir, "before.jpg"),
-    afterPath: ["previewed", "restored"].includes(job.status) ? path.join(dir, "after.jpg") : "",
+    afterPath: canRefine ? path.join(dir, "after.jpg") : "",
     referencePath: job.referenceFile ? path.join(dir, job.referenceFile) : "",
-    error: job.error, recoveryError: job.recoveryError,
+    error: job.error, recoveryError: job.recoveryError, outcomeUnknown: job.outcomeUnknown,
   };
 }
 
@@ -188,7 +190,7 @@ export class WorkbenchServer {
         const task = this.tasks.get(taskMatch[1]);this.send(res,task ? 200 : 404,task ?? {error:"任务不存在，请重新读取照片"});return;
       }
       const jobMatch = req.url?.match(/^\/jobs\/([0-9a-f-]{36})$/);
-      if (req.method === "GET" && jobMatch) {this.send(res,200,jobView(await this.host.store.load(jobMatch[1]),this.host));return;}
+      if (req.method === "GET" && jobMatch) {this.send(res,200,await jobView(await this.host.store.load(jobMatch[1]),this.host));return;}
       if (req.method === "POST" && req.url === "/cancel") {
         if (!this.active?.task.cancellable) {this.send(res,409,{error:"当前步骤需要等待完成"});return;}
         this.active.controller.abort();this.send(res,200,{ok:true});return;
@@ -242,22 +244,22 @@ export class WorkbenchServer {
               if(action==="refine") job=await this.host.prepareRefinement(String(body.jobId),body.feedback as string,body.strength as number|undefined,body.localMasks===true);
               else if(action==="apply-style") job=await this.host.captureStyle(String(body.styleId),body.photoId as string|undefined,body.strength as number|undefined,body.extra as string|undefined,undefined,body.localMasks===true);
               else job = await this.host.capture(request ?? {mode:"lucky",prompt:"",strength:1},body.photoId as string|undefined);
-              task.job = jobView(job,this.host);
+              task.job = await jobView(job,this.host);
               if (generates) {
                 task.stage = "generate";task.cancellable = true;
                 job = await this.host.plan(job.id,controller.signal);
               }
             } else {
-              task.job = jobView(await this.host.store.load(String(body.jobId)),this.host);
+              task.job = await jobView(await this.host.store.load(String(body.jobId)),this.host);
               if(action==="save-style") {await this.host.saveStyle(String(body.jobId),body.name as string);job=await this.host.store.load(String(body.jobId));}
               else job = action === "preview" ? await this.host.preview(String(body.jobId)) : await this.host.restore(String(body.jobId));
             }
-            task.job = jobView(job,this.host);task.state = "completed";
+            task.job = await jobView(job,this.host);task.state = "completed";
           } catch (error) {
             task.error = controller.signal.aborted ? "生成已停止，可重新生成方案。" : String(error);
             task.state = "failed";
             if (task.job) {
-              try {task.job = jobView(await this.host.store.load(task.job.id),this.host);} catch { /* Keep the primary error if the journal is unavailable. */ }
+              try {task.job = await jobView(await this.host.store.load(task.job.id),this.host);} catch { /* Keep the primary error if the journal is unavailable. */ }
             }
           } finally {task.cancellable = false;this.active = undefined;}
         };

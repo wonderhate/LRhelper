@@ -62,11 +62,11 @@ function maskSelectorProblem(args: unknown): string | null {
 
 /**
  * Returns null for valid arguments, or a message naming invalid fields.
- * Unknown tool names pass through so the dispatcher keeps reporting them.
+ * The owner bridge validates forwarded calls independently of the follower.
  */
 export function validateToolArgs(name: string, args: unknown): string | null {
   const validate = validators.get(name);
-  if (!validate) return null;
+  if (!validate) return `Unknown tool "${name}". Use tools/list to see available tools.`;
   const selectorProblem = name === "create_mask" ? maskSelectorProblem(args) : null;
   if (selectorProblem) return `Invalid arguments for ${name}: ${selectorProblem}`;
   if (validate(args ?? {})) {
