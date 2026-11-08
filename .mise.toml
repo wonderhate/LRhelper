@@ -1,0 +1,72 @@
+[tools]
+node = "26.13.0"
+bun = "1.4.4"
+lua = "5.5.1"
+# selene (Rust) is the Lua linter — see lua:lint. A native binary, so unlike
+# luacheck it does not run on the Lua above and is immune to Lua-version breaks.
+"aqua:Kampfkarren/selene" = "0.32.0"
+
+[env]
+# Project-local LuaRocks tree (busted) installed by `lua:deps`.
+_.path = ["lua_modules/bin"]
+
+[tasks.install]
+description = "Install dependencies"
+run = "cd server && npm install"
+
+[tasks.build]
+description = "Build TypeScript MCP server"
+run = "cd server && npm run build"
+
+[tasks.test]
+description = "Run tests"
+run = "cd server && npm test"
+
+[tasks.dev]
+description = "Build in watch mode"
+run = "cd server && npm run watch"
+
+[tasks."plugin:reload"]
+description = "Reload the installed Lightroom MCP plug-in on macOS"
+run = "osascript tests/e2e/reload-plugin.applescript"
+
+[tasks.mcpb]
+description = "Build the .mcpb bundle for Claude Desktop / Claude Code"
+run = "node scripts/build-mcpb.mjs"
+
+[tasks.binary]
+description = "Build single-file binaries (macos + windows) via Bun"
+run = "node scripts/build-binary.mjs"
+
+[tasks."skill:test"]
+description = "Run Python tests for bundled skill scripts"
+run = "cd skills/raw-photo-lightroom-preset && python3 -m unittest discover -s tests -v"
+
+[tasks."lua:deps"]
+description = "Install Lua test rocks (busted) into lua_modules/"
+run = "test -x lua_modules/bin/busted || luarocks install --tree lua_modules busted"
+
+[tasks."lua:test"]
+description = "Run busted specs for the Lightroom plugin"
+depends = ["lua:deps"]
+run = "lua_modules/bin/busted"
+
+[tasks."lua:lint"]
+description = "Lint the Lightroom plugin with selene"
+run = "selene plugin/LightroomMCP.lrplugin"
+
+[tasks."live:fixtures"]
+description = "Generate the live-test fixtures, download the CC0 raw samples and verify both"
+run = [
+  "node tests/e2e/live/generate-fixtures.mjs",
+  "node tests/e2e/live/fetch-samples.mjs",
+  "node tests/e2e/live/verify-fixtures.mjs",
+]
+
+[tasks."live:test"]
+description = "Run the unit tests of the live-test kit (no Lightroom needed)"
+run = "node --test \"tests/e2e/live/unit/*.test.mjs\""
+
+[tasks."live:setup"]
+description = "Create a throwaway Lightroom catalog and import the live-test fixtures (macOS)"
+run = "node tests/e2e/live/setup-catalog.mjs"

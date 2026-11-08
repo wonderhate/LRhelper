@@ -1,0 +1,259 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+export interface InstanceLock {
+  release: () => void;
+  /** Runs once when another bridge takes the lock while this one still holds it. */
+  onLost: (listener: () => void) => void;
+}
+
+function defaultBaseDir(): string {
+  return path.join(os.homedir(), ".config", "lightroom-mcp");
+}
+
+function lockPath(baseDir: string, requestPort: number, responsePort: number): string {
+  return path.join(baseDir, `bridge-${requestPort}-${responsePort}.lock`);
+}
+
+function pidIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function readPid(pidFile: string): number | null {
+  try {
+    const raw = fs.readFileSync(pidFile, "utf8").trim();
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Like readPid, but tells a missing lock apart from an unreadable one. */
+function readOwner(lockFile: string): number | null | "missing" {
+  try {
+    fs.statSync(lockFile);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+  }
+  return readPid(lockFile);
+}
+
+const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "ENOSYS", "EOPNOTSUPP"]);
+
+/**
+ * Publishes the pending pid file as the lock; false when a lock already
+ * exists. Filesystems without hard links fall back to exclusive create, which
+ * reopens the brief empty-lock window the link avoids.
+ */
+function publish(pending: string, lockFile: string): boolean {
+  try {
+    fs.linkSync(pending, lockFile);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? "";
+    if (code === "EEXIST") return false;
+    if (!NO_HARD_LINKS.has(code)) throw err;
+  }
+  let fd: number;
+  try {
+    fd = fs.openSync(lockFile, "wx", 0o600);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
+  }
+  try {
+    fs.writeFileSync(fd, `${process.pid}\n`, { encoding: "utf8" });
+  } finally {
+    fs.closeSync(fd);
+  }
+  return true;
+}
+
+/** Thrown when a live process holds the lock; carries its pid for diagnostics. */
+export class LockHeldError extends Error {
+  constructor(
+    readonly pid: number,
+    requestPort: number,
+    responsePort: number,
+  ) {
+    super(
+      `Another Lightroom MCP bridge is already running for ports ${requestPort}/${responsePort} (pid ${pid})`,
+    );
+  }
+}
+
+/** A guard or pid-less lock older than this belongs to a process that died. */
+const STALE_GUARD_MS = 5_000;
+
+function isFresh(file: string, maxAgeMs = STALE_GUARD_MS): boolean {
+  try {
+    return Date.now() - fs.statSync(file).mtimeMs <= maxAgeMs;
+  } catch {
+    return false;
+  }
+}
+
+/** How often the owner refreshes its heartbeat file. */
+const HEARTBEAT_MS = 5_000;
+/** An owner whose heartbeat is older than this is hung, or its pid was reused. */
+const HEARTBEAT_STALE_MS = 60_000;
+
+function heartbeatPath(lockFile: string): string {
+  return `${lockFile}.alive`;
+}
+
+/**
+ * True when a live pid's lock no longer has a working owner: the owner kept a
+ * heartbeat and stopped refreshing it, and the lock itself is not newly
+ * taken. Owners that never wrote a heartbeat (older versions) never qualify,
+ * nor does one beside a heartbeat left by an earlier owner.
+ */
+function ownerUnresponsive(lockFile: string): boolean {
+  const owner = readPid(lockFile);
+  const heartbeat = heartbeatPath(lockFile);
+  if (owner === null || readPid(heartbeat) !== owner) return false;
+  return !isFresh(heartbeat, HEARTBEAT_STALE_MS) && !isFresh(lockFile, HEARTBEAT_STALE_MS);
+}
+
+/** The pid the lock for these ports names, or null when there is none. */
+export function lockHolder(requestPort: number, responsePort: number, baseDir = defaultBaseDir()): number | null {
+  return readPid(lockPath(baseDir, requestPort, responsePort));
+}
+
+/** True when the bridge holding the lock for these ports stopped beating. */
+export function lockHolderUnresponsive(
+  requestPort: number,
+  responsePort: number,
+  baseDir = defaultBaseDir(),
+): boolean {
+  return ownerUnresponsive(lockPath(baseDir, requestPort, responsePort));
+}
+
+/**
+ * Removes a dead or unresponsive owner's lock and heartbeat, but only if the
+ * lock still names that owner. The
+ * guard serializes reclaimers: without it, two of them can both see the dead
+ * pid, and the slower one deletes the lock the faster one just took. A lock
+ * that has vanished is never removed: a non-reclaiming bridge may be linking
+ * a fresh one into its place.
+ */
+function reclaimStale(lockFile: string, stalePid: number | null): boolean {
+  const guard = `${lockFile}.reclaim`;
+  try {
+    fs.closeSync(fs.openSync(guard, "wx", 0o600));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    if (!isFresh(guard)) fs.rmSync(guard, { force: true });
+    return false;
+  }
+  try {
+    const current = readOwner(lockFile);
+    const midWrite = current === null && isFresh(lockFile);
+    if (current !== "missing" && current === stalePid && !midWrite) {
+      fs.rmSync(heartbeatPath(lockFile), { force: true });
+      fs.rmSync(lockFile, { force: true });
+    }
+  } finally {
+    fs.rmSync(guard, { force: true });
+  }
+  return true;
+}
+
+/**
+ * Takes the per-port-pair bridge lock. The pid is written to a private file
+ * first and hard-linked into place, so the lock never exists without its pid:
+ * an empty lock seen mid-write would look stale and be reclaimed while live.
+ * The owner refreshes a heartbeat file beside the lock, so a live pid that
+ * stopped beating (hung, or reused by an unrelated process after a crash) is
+ * reclaimed like a dead one. Throws LockHeldError when a live, beating bridge
+ * holds it.
+ */
+export function acquireInstanceLock(
+  requestPort: number,
+  responsePort: number,
+  baseDir = defaultBaseDir(),
+): InstanceLock {
+  fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 });
+  const lockFile = lockPath(baseDir, requestPort, responsePort);
+
+  const pending = `${lockFile}.${process.pid}.tmp`;
+  fs.writeFileSync(pending, `${process.pid}\n`, { encoding: "utf8", mode: 0o600 });
+  try {
+    while (!publish(pending, lockFile)) {
+      const existingPid = readOwner(lockFile);
+      if (existingPid === "missing") continue;
+      if (existingPid === null && isFresh(lockFile)) {
+        throw new Error(`Another bridge is still writing the lock for ports ${requestPort}/${responsePort}`);
+      }
+      if (existingPid && pidIsAlive(existingPid) && !ownerUnresponsive(lockFile)) {
+        throw new LockHeldError(existingPid, requestPort, responsePort);
+      }
+      if (!reclaimStale(lockFile, existingPid)) {
+        throw new Error(`Another bridge is reclaiming the stale lock for ports ${requestPort}/${responsePort}`);
+      }
+    }
+  } finally {
+    fs.rmSync(pending, { force: true });
+  }
+
+  const heartbeatFile = heartbeatPath(lockFile);
+  let lost = false;
+  let lostListener: (() => void) | null = null;
+  const beat = () => {
+    const owner = readOwner(lockFile);
+    // Unreadable (sharing violation, EMFILE) is not proof of loss; retry next beat.
+    if (owner === null) return;
+    // A reclaimed owner that wakes up must not refresh its successor's heartbeat.
+    if (owner !== process.pid) {
+      clearInterval(heartbeat);
+      lost = true;
+      lostListener?.();
+      return;
+    }
+    try {
+      fs.writeFileSync(heartbeatFile, `${process.pid}\n`, { encoding: "utf8", mode: 0o600 });
+    } catch {
+      // Best effort: a missed beat only delays reclaim if this process hangs.
+    }
+  };
+  const heartbeat = setInterval(beat, HEARTBEAT_MS);
+  heartbeat.unref();
+  beat();
+
+  let released = false;
+  const exitHandler = () => release();
+  const signalHandler = () => {
+    release();
+    process.exit(0);
+  };
+  const release = () => {
+    if (released) return;
+    released = true;
+    clearInterval(heartbeat);
+    process.off("exit", exitHandler);
+    process.off("SIGINT", signalHandler);
+    process.off("SIGTERM", signalHandler);
+    if (readPid(lockFile) === process.pid) {
+      fs.rmSync(heartbeatFile, { force: true });
+      fs.unlinkSync(lockFile);
+    }
+  };
+
+  process.once("exit", exitHandler);
+  process.once("SIGINT", signalHandler);
+  process.once("SIGTERM", signalHandler);
+
+  const onLost = (listener: () => void) => {
+    lostListener = listener;
+    if (lost) listener();
+  };
+
+  return { release, onLost };
+}

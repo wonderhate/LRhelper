@@ -1,0 +1,23 @@
+name: Bug report / 错误报告
+description: Report a reproducible problem with LRhelper.
+labels: [bug]
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: Versions / 版本
+      description: LRhelper, Lightroom Classic, Windows and Node.js versions.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction / 复现步骤
+      description: Include the action, expected result and actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted output / 脱敏输出
+      description: Remove tokens, private paths, photos and personal information.

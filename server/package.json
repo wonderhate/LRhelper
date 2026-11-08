@@ -1,0 +1,73 @@
+{
+  "name": "@mskalski/lightroom-mcp",
+  "version": "0.26.0",
+  "description": "MCP server bridging Claude/Codex/ChatGPT to Adobe Lightroom Classic via a Lua plugin.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "lightroom-mcp": "dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "LightroomMCP.lrplugin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/generate-skill.mjs && tsc",
+    "check": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "lint": "eslint src tests",
+    "watch": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage --runInBand",
+    "prepare": "npm run build",
+    "prepack": "node scripts/stage-plugin.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "lightroom",
+    "lightroom-classic",
+    "photography",
+    "claude",
+    "codex",
+    "chatgpt"
+  ],
+  "author": "Marcin Skalski",
+  "license": "MIT",
+  "homepage": "https://github.com/Automaat/lightroom-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Automaat/lightroom-mcp.git",
+    "directory": "server"
+  },
+  "bugs": {
+    "url": "https://github.com/Automaat/lightroom-mcp/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
+    "ajv": "^8.20.0",
+    "jpeg-js": "0.4.4"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.0.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "eslint": "^10.4.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "jest": "^30.0.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-eslint": "^8.59.3"
+  },
+  "mcpName": "io.github.Automaat/lightroom-mcp"
+}

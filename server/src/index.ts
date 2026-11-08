@@ -1,0 +1,310 @@
+#!/usr/bin/env node
+
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { PluginSocket } from "./plugin-socket.js";
+import { Dispatcher } from "./dispatcher.js";
+import { readToken, tokenFilePath } from "./token.js";
+import { requestPort, responsePort } from "./ports.js";
+import { parseToolsets, type Toolset } from "./toolsets.js";
+import { parseReadOnly } from "./read-only.js";
+import { createMcpServer } from "./create-server.js";
+import { createCallToolHandler, NOT_CONNECTED_DETAILS, NOT_CONNECTED_MESSAGE } from "./tool-handler.js";
+import { Bridge, type Leader } from "./bridge.js";
+import { brokerPath } from "./broker.js";
+import { parseCli, helpText } from "./cli.js";
+import { VERSION } from "./version.js";
+import { startHeartbeat, probePlugin } from "./heartbeat.js";
+import { PluginLiveness } from "./plugin-liveness.js";
+import { waitUntil } from "./wait-until.js";
+import { diagnoseUnresponsive, UnresponsiveReporter } from "./port-owner.js";
+import { acquireInstanceLock, lockHolder, lockHolderUnresponsive } from "./instance-lock.js";
+import {
+  ensurePluginInstalled,
+  findBundledPlugin,
+  findPluginBesideBinary,
+  findPluginInCwd,
+  installPlugin,
+  lightroomModulesDir,
+} from "./install-plugin.js";
+
+const REQUEST_TIMEOUT_MS = 30_000;
+// Batch export/import render files and can run for minutes; the default
+// timeout would report a spurious failure mid-export. See issue #128.
+const LONG_RUNNING_TIMEOUT_MS = 300_000;
+// Keep this interval in sync with HEARTBEAT_INTERVAL_SECONDS in
+// PluginInfoProvider.lua. See heartbeat.ts for what this drives.
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const PING_TIMEOUT_MS = 10_000;
+const RESPONSE_CONNECT_SETTLE_MS = 200;
+// Short enough that a tool call waiting on the verdict is not left hanging,
+// generous enough for a busy-but-healthy plugin: a ping is a no-op dispatch
+// that answered in single-digit milliseconds even mid-export.
+const PROBE_TIMEOUT_MS = 5_000;
+const PROBE_RECOVERY_INTERVAL_MS = 5_000;
+// A client that calls a tool immediately after initialize would otherwise be
+// told "plugin not connected" while the sockets are still coming up, which is
+// a lie about a perfectly healthy Lightroom. Wait out the connect instead.
+const STARTUP_GRACE_MS = 3_000;
+const CONNECT_POLL_MS = 50;
+const ACTION_TIMEOUTS_MS: Record<string, number> = {
+  get_photo_previews: 30_000,
+  export_photos: LONG_RUNNING_TIMEOUT_MS,
+  export_photo_metadata: LONG_RUNNING_TIMEOUT_MS,
+  import_photos: LONG_RUNNING_TIMEOUT_MS,
+  set_process_version: LONG_RUNNING_TIMEOUT_MS,
+  set_lens_blur: LONG_RUNNING_TIMEOUT_MS,
+  apply_denoise: LONG_RUNNING_TIMEOUT_MS,
+  reset_develop_adjustments: LONG_RUNNING_TIMEOUT_MS,
+  create_virtual_copies: LONG_RUNNING_TIMEOUT_MS,
+  apply_auto_adjustments: LONG_RUNNING_TIMEOUT_MS,
+  create_mask: LONG_RUNNING_TIMEOUT_MS,
+  create_mask_batch: LONG_RUNNING_TIMEOUT_MS,
+  combine_mask: LONG_RUNNING_TIMEOUT_MS,
+  ping: PING_TIMEOUT_MS,
+};
+const SHUTDOWN_GRACE_MS = Math.max(REQUEST_TIMEOUT_MS, ...Object.values(ACTION_TIMEOUTS_MS)) + 5_000;
+const SHUTDOWN_EXIT_MARGIN_MS = 1_000;
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+async function main() {
+  let cli;
+  try {
+    cli = parseCli(process.argv);
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(2);
+  }
+
+  if (cli.command === "help") {
+    process.stdout.write(helpText());
+    return;
+  }
+  if (cli.command === "version") {
+    process.stdout.write(VERSION + "\n");
+    return;
+  }
+  if (cli.command === "install-plugin") {
+    runInstallPlugin();
+    return;
+  }
+
+  let toolsets: readonly Toolset[];
+  let readOnly: boolean;
+  let REQUEST_PORT: number;
+  let RESPONSE_PORT: number;
+  try {
+    toolsets = parseToolsets(process.env.LIGHTROOM_MCP_TOOLSETS);
+    readOnly = parseReadOnly(process.env.LIGHTROOM_MCP_READ_ONLY);
+    REQUEST_PORT = requestPort();
+    RESPONSE_PORT = responsePort();
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+
+  ensurePluginInstalled(here, (m) => console.error(m));
+
+  const bridge = new Bridge({
+    ipcPath: brokerPath(REQUEST_PORT, RESPONSE_PORT),
+    acquireLock: () => acquireInstanceLock(REQUEST_PORT, RESPONSE_PORT),
+    startLeader: () => startLeader(REQUEST_PORT, RESPONSE_PORT),
+    readToken: tryReadToken,
+    holderUnresponsive: () => lockHolderUnresponsive(REQUEST_PORT, RESPONSE_PORT),
+    lockHolder: () => lockHolder(REQUEST_PORT, RESPONSE_PORT),
+  });
+
+  const server = createMcpServer({ callTool: (name, args, options) => bridge.callTool(name, args, options) }, { toolsets, readOnly });
+  server.oninitialized = () => void bridge.start();
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+
+  // Exit when the MCP client goes away. Signal handlers never fire when the
+  // parent dies without signaling (typical on Windows), and the live plugin
+  // sockets plus the heartbeat interval keep the event loop alive — the
+  // orphaned bridge then holds both the single-client plugin connection and
+  // the instance lock, so every future bridge instance fails with "Another
+  // Lightroom MCP bridge is already running". Stdin EOF is the one reliable
+  // cross-platform signal that the client is gone.
+  let shuttingDown = false;
+  const exitOnClientGone = (reason: string) => () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`Shutting down: ${reason}`);
+    setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS + SHUTDOWN_EXIT_MARGIN_MS).unref();
+    void bridge.shutdown(SHUTDOWN_GRACE_MS).finally(() => process.exit(0));
+  };
+  process.stdin.once("end", exitOnClientGone("stdin ended (client exited)"));
+  process.stdin.once("close", exitOnClientGone("stdin closed (client exited)"));
+
+  console.error(`Lightroom MCP server v${VERSION} running on stdio`);
+  console.error(`Connecting to plugin: request :${REQUEST_PORT}, response :${RESPONSE_PORT}`);
+  console.error(`Token file: ${tokenFilePath()}`);
+}
+
+function tryReadToken(): string | null {
+  try {
+    return readToken();
+  } catch {
+    return null;
+  }
+}
+
+function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
+  let requestSocket: PluginSocket;
+  let responseSocket: PluginSocket | null = null;
+  let responseConnectTimer: NodeJS.Timeout | null = null;
+  const dispatcher = new Dispatcher({
+    send: (line) => requestSocket.send(line),
+    getToken: () => readToken(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    actionTimeoutsMs: ACTION_TIMEOUTS_MS,
+  });
+  const liveness = new PluginLiveness();
+  let recoveryTimer: NodeJS.Timeout | null = null;
+  const unresponsive = new UnresponsiveReporter({
+    diagnose: () => diagnoseUnresponsive([REQUEST_PORT, RESPONSE_PORT]),
+    log: (message) => console.error(`[plugin] ${message}`),
+  });
+  const probeOnConnect = () => {
+    const token = liveness.beginProbe();
+    if (token === null) return;
+    void probePlugin(dispatcher, PROBE_TIMEOUT_MS).then((answered) => {
+      if (!liveness.settleProbe(token, answered)) return;
+      if (answered) {
+        unresponsive.clear();
+        if (recoveryTimer) {
+          clearInterval(recoveryTimer);
+          recoveryTimer = null;
+        }
+        return;
+      }
+      unresponsive.report();
+      // Re-probe faster than the 30s heartbeat so the bridge recovers promptly
+      // once the process holding the plugin goes away.
+      if (!recoveryTimer) {
+        recoveryTimer = setInterval(() => probeOnConnect(), PROBE_RECOVERY_INTERVAL_MS);
+      }
+    });
+  };
+  const startResponseSocket = () => {
+    if (responseSocket || !requestSocket.isConnected()) return;
+    responseSocket = new PluginSocket({
+      port: RESPONSE_PORT,
+      label: "response",
+      onLine: (line) => dispatcher.handleResponseLine(line),
+      onConnect: () => probeOnConnect(),
+    });
+    responseSocket.connect();
+  };
+  const stopResponseSocket = () => {
+    liveness.reset();
+    unresponsive.clear();
+    if (responseConnectTimer) {
+      clearTimeout(responseConnectTimer);
+      responseConnectTimer = null;
+    }
+    responseSocket?.stop();
+    responseSocket = null;
+  };
+  requestSocket = new PluginSocket({
+    port: REQUEST_PORT,
+    label: "request",
+    onConnect: () => {
+      if (responseConnectTimer) clearTimeout(responseConnectTimer);
+      responseConnectTimer = setTimeout(() => {
+        responseConnectTimer = null;
+        startResponseSocket();
+      }, RESPONSE_CONNECT_SETTLE_MS);
+    },
+    onDisconnect: () => {
+      stopResponseSocket();
+    },
+  });
+  requestSocket.connect();
+
+  const socketsConnected = () =>
+    requestSocket.isConnected() && (responseSocket?.isConnected() ?? false);
+
+  const heartbeat = startHeartbeat(
+    dispatcher,
+    HEARTBEAT_INTERVAL_MS,
+    (err) => {
+      console.error(`[heartbeat] ping failed: ${err.message}`);
+      // A ping that fails because the socket is down is an ordinary disconnect,
+      // not a second bridge holding the plugin. Only diagnose the latter while
+      // the connection is actually up, or a stopped plugin gets blamed on a
+      // process that does not exist.
+      if (!socketsConnected()) {
+        liveness.reset();
+        return;
+      }
+      liveness.markUnresponsive();
+      unresponsive.report();
+    },
+    () => {
+      liveness.markResponsive();
+      unresponsive.clear();
+    },
+  );
+
+  const callTool = createCallToolHandler({
+    dispatcher,
+    isReady: () => socketsConnected() && liveness.isUsable(),
+    notReadyMessage: () => {
+      if (socketsConnected()) return unresponsive.current();
+      console.error(`[plugin] ${NOT_CONNECTED_DETAILS}`);
+      return NOT_CONNECTED_MESSAGE;
+    },
+    settleReadiness: async () => {
+      await waitUntil(socketsConnected, STARTUP_GRACE_MS, CONNECT_POLL_MS);
+      await liveness.settled();
+      await unresponsive.settled();
+    },
+  });
+
+  return {
+    callTool,
+    stop: () => {
+      clearInterval(heartbeat);
+      if (recoveryTimer) clearInterval(recoveryTimer);
+      stopResponseSocket();
+      requestSocket.stop();
+    },
+  };
+}
+
+function runInstallPlugin(): void {
+  const source = findBundledPlugin(here) ?? findPluginBesideBinary() ?? findPluginInCwd();
+  if (!source) {
+    console.error("Could not locate a LightroomMCP.lrplugin folder.");
+    console.error(
+      "Extract LightroomMCP-<platform>.lrplugin.zip from the release next to this binary (or run from that folder), then retry.",
+    );
+    process.exit(1);
+  }
+  const dest = lightroomModulesDir();
+  try {
+    const result = installPlugin({ source, destDir: dest });
+    if (result.status === "installed") {
+      console.error(`Installed plugin: ${result.destination}`);
+      console.error(`Restart Lightroom Classic to load it.`);
+    } else if (result.status === "already-present") {
+      console.error(`Plugin already present at ${result.destination}`);
+    } else {
+      console.error(`Skipped: ${result.reason ?? "unknown reason"}`);
+      process.exit(1);
+    }
+  } catch (err) {
+    console.error(`Install failed: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+main().catch((error) => {
+  console.error("Fatal error:", error);
+  process.exit(1);
+});

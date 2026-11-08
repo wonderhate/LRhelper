@@ -1,0 +1,17 @@
+name: Feature request / 功能建议
+description: Suggest an improvement to a Lightroom workflow.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow / 使用场景
+      description: What are you trying to accomplish in Lightroom?
+    validations:
+      required: true
+  - type: textarea
+    id: request
+    attributes:
+      label: Requested behavior / 期望行为
+    validations:
+      required: true
