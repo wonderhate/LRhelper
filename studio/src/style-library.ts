@@ -1,10 +1,10 @@
-import { mkdir, writeFile, rename, readdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { checkImage, hasVerifiedPreview, type JobStore } from "./job-store.js";
 import type { GradePlan, Job, Settings } from "./types.js";
 import { canExportXmp, exportStyleXmp } from "./xmp-preset.js";
-import { imageLimit, isRecordId, localFilePath, readLocalFile, readRecord } from "./local-files.js";
+import { imageLimit, isRecordId, localFilePath, readLocalFile, readRecord, writeAtomic } from "./local-files.js";
 import { validStyle } from "./journal-schema.js";
 
 export interface SavedStyle {
@@ -58,9 +58,8 @@ export class StyleLibrary {
     const style: SavedStyle={version:1,id:randomUUID(),name:name.trim(),createdAt:new Date().toISOString(),intent,strength:chain[0].request.strength,sourceJobId:job.id,sourcePlan:job.plan,sourceSettings:job.settings,sourceBaseline:job.baseline};
     if(reference) style.referenceFile=`reference.${checkImage(reference)}`;
     await mkdir(this.dir(style.id),{recursive:true});
-    if(reference && style.referenceFile) await writeFile(path.join(this.dir(style.id),style.referenceFile),reference,{mode:0o600});
-    const file=path.join(this.dir(style.id),"style.json"),temporary=`${file}.${randomUUID()}.tmp`;
-    await writeFile(temporary,JSON.stringify(style,null,2),{mode:0o600});await rename(temporary,file);
+    if(reference && style.referenceFile) await writeAtomic(path.join(this.dir(style.id),style.referenceFile),reference);
+    await writeAtomic(path.join(this.dir(style.id),"style.json"),JSON.stringify(style,null,2));
     return this.view(style);
   }
 }

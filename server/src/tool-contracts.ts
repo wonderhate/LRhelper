@@ -1656,6 +1656,8 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       properties: {
         photo_id: photoIdSchema("Photo ID or file path"),
         snapshot_id: { type: "string", minLength: 1, description: "Snapshot id returned for this photo" },
+        expected_catalog_path: { type: "string", minLength: 1, description: "Refuse to restore if a different Lightroom catalog is active" },
+        expected_copy_name: { type: "string", minLength: 1, description: "Refuse to restore if the target is not a virtual copy with this name" },
       },
       required: ["photo_id", "snapshot_id"],
     },

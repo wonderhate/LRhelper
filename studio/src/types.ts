@@ -31,8 +31,10 @@ export interface Photo {
   id: string | number;
   path: string;
   filename: string;
+  catalogPath?: string;
+  copyName?: string;
   isVirtualCopy?: boolean;
-  virtualCopy?: { masterPhotoId?: string | number };
+  virtualCopy?: { masterPhotoId?: string | number; copyIds?: (string | number)[] };
   developSettings: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -57,7 +59,10 @@ export interface Job {
   threadId?: string;
   referenceFile?: string;
   copyId?: string | number;
+  copyName?: string;
   snapshotId?: string;
+  snapshotName?: string;
+  recoveryNote?: string;
   readback?: Settings;
   error?: string;
   recoveryError?: string;

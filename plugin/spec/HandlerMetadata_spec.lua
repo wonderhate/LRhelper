@@ -2,6 +2,7 @@ local helper = require 'spec_helper'
 
 local function setup(photos)
     local catalog = helper.fakeCatalog({ photos = photos or {} })
+    function catalog:getPath() return "/test.lrcat" end
     helper.installImport({
         LrApplication = { activeCatalog = function() return catalog end },
         LrTasks = { pcall = pcall },
@@ -118,13 +119,15 @@ describe("HandlerMetadata.getPhotoMetadata", function()
 
     it("identifies a virtual copy and its master's catalog id", function()
         local master = helper.fakePhoto({ id = 7 })
-        local copy = helper.fakePhoto({ id = 8, isVirtualCopy = true, masterPhoto = master })
+        local copy = helper.fakePhoto({ id = 8, isVirtualCopy = true, masterPhoto = master, copyName = "Studio test copy" })
         local _, Handler = setup({ master, copy })
 
-        local r = Handler.getPhotoMetadata({ photo_id = "8" })
+        local r = Handler.getPhotoMetadata({ photo_id = "8", sections = { "developSettings" } })
 
         assert.is_true(r.isVirtualCopy)
         assert.are.same({ masterPhotoId = 7 }, r.virtualCopy)
+        assert.are.equal("Studio test copy", r.copyName)
+        assert.are.equal("/test.lrcat", r.catalogPath)
     end)
 
     it("lists a master's virtual copies by catalog id", function()

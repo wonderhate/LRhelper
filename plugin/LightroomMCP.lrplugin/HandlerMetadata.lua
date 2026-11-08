@@ -300,7 +300,14 @@ function MetadataHandler.getPhotoMetadata(args)
     catalog:withReadAccessDo(function()
         for _, entry in ipairs(resolved) do
             if entry.photo then
-                photos[#photos + 1] = readPhotoMetadata(entry.photo, includeDevelopSettings)
+                local metadata = readPhotoMetadata(entry.photo, includeDevelopSettings)
+                if includeDevelopSettings then
+                    metadata.catalogPath = catalog:getPath()
+                    if metadata.isVirtualCopy then
+                        metadata.copyName = entry.photo:getFormattedMetadata('copyName')
+                    end
+                end
+                photos[#photos + 1] = metadata
             else
                 missing[#missing + 1] = tostring(entry.id)
             end

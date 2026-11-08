@@ -120,6 +120,24 @@ test('batch stops when a write is unconfirmed even with a known recovery snapsho
   assert.deepEqual(f.writes.map(write => write.name), ['create_virtual_copies', 'create_develop_snapshot', 'set_develop_settings']);
   assert.equal((await f.store.load(blocked.items[0].jobId)).outcomeUnknown, 'timeout_unknown');
   assert.equal(blocked.items[1].status, 'planned');
+  f.lr.call = call;
+  await f.host.restore(blocked.items[0].jobId);
+  const afterRestore = await f.host.batches.preview(batch.id, () => {});
+  assert.deepEqual(afterRestore.items.map(item => item.status), ['restored', 'previewed']);
+});
+
+test('after host restart a batch exposes interrupted writes before offering the next photo', async t => {
+  const f = await batchFixture(t);
+  const batch = await f.host.batches.plan(f.style.id, ['1', '2'], undefined, new AbortController().signal, () => {});
+  const job = await f.store.load(batch.items[0].jobId);
+  job.status = 'creating-copy';
+  await f.store.save(job);
+  const restarted = new StudioHost(f.lr, f.model, new JobStore(f.store.root), 0);
+  const blocked = await restarted.batches.show(batch.id);
+  assert.equal(blocked.blockedByPhotoId, '1');
+  assert.equal(blocked.previewable, 0);
+  await assert.rejects(restarted.batches.preview(batch.id, () => {}), /批次已停止/);
+  assert.equal(f.writes.length, 0);
 });
 
 test('damaged journals do not hide valid records or let history resolve outside the job store', async t => {

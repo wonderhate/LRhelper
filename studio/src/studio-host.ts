@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { JobStore, available, checkImage, hasVerifiedPreview } from "./job-store.js";
+import { JobStore, available, canReconcile, checkImage, hasVerifiedPreview } from "./job-store.js";
 import { allowedKeys, equalValue, fingerprint, flatten, stable } from "./grading/settings.js";
 import { validatePlan } from "./grading/validator.js";
 import { mapPlan } from "./grading/mapper.js";
@@ -10,7 +10,8 @@ import { StyleLibrary } from "./style-library.js";
 import { BatchQueue } from "./batch-queue.js";
 import { LightroomOutcomeUnknown } from "./lightroom.js";
 import { imageLimit, localFilePath, readBoundedFile, readLocalFile } from "./local-files.js";
-import type { GradeRequest, Job, Lightroom, MaskPlan, MaskSummary, ModelRuntime, Settings } from "./types.js";
+import type { GradeRequest, Job, Lightroom, MaskPlan, MaskSummary, ModelRuntime, Photo, Settings } from "./types.js";
+
 
 export class StudioHost {
   readonly styles: StyleLibrary;
@@ -81,7 +82,9 @@ export class StudioHost {
       const chain=await this.chain(parentId),parent=chain.at(-1)!;
       if(chain.length>=20) throw new Error("本会话已达 20 轮，请开始新会话");
       if(!await hasVerifiedPreview(parent,this.store.dir(parent.id))) throw new Error("请先完成上一轮预览，再继续调整");
-      if(fingerprint(await this.lr.metadata(parent.source.id))!==parent.sourceFingerprint) throw new Error("源照片已变更，请重新读取并开始新会话");
+      const source=await this.lr.metadata(parent.source.id);
+      this.verifyCatalog(parent,source);
+      if(fingerprint(source)!==parent.sourceFingerprint) throw new Error("源照片已变更，请重新读取并开始新会话");
       const capabilities=await this.lr.discover();
       const maskCapabilities=localMasks ? await this.requireMasks() : undefined;
       this.mapChain(chain,allowedKeys(capabilities,parent.baseline));
@@ -168,27 +171,32 @@ export class StudioHost {
         for (const mask of masks) checkMask(mask,capabilities);
       }
       const source=await this.lr.metadata(job.source.id);
+      this.verifyCatalog(job,source);
       if(fingerprint(source)!==job.sourceFingerprint) throw new Error("Source edit changed since capture; capture and plan again");
       await available(source.path);
       const before=await readLocalFile(this.store.dir(id),"before.jpg",imageLimit,"原始预览不可用");
       if(masks.length && !before.equals(await this.renderStable(source.id))) throw new Error("源照片的渲染图已变更，请重新读取并生成方案。");
       try {
         job.renderCompleted=false;
+        job.copyName=`Studio ${job.id}`;
+        job.snapshotName=`Studio baseline ${job.id}`;
         job.status="creating-copy";await this.store.save(job);
-        const result=await this.lr.call("create_virtual_copies",{photo_ids:[source.id],copy_name:`Studio ${job.id.slice(0,8)}`});
+        const result=await this.lr.call("create_virtual_copies",{photo_ids:[source.id],copy_name:job.copyName});
         const copies=result.copies as {copy_id:string|number;photo_id:string|number}[];
+        const copyId=Array.isArray(copies) ? copies[0]?.copy_id : undefined;
         if(result.created!==1 || !Array.isArray(copies) || copies.length!==1 ||
-          (typeof copies[0]?.copy_id!=="string" && typeof copies[0]?.copy_id!=="number")) {
+          String(copies[0]?.photo_id)!==String(source.id) ||
+          (typeof copyId!=="string" && typeof copyId!=="number") || !/^[1-9]\d*$/.test(String(copyId))) {
           throw new LightroomOutcomeUnknown("protocol_unknown");
         }
-        job.copyId=copies[0].copy_id;
+        job.copyId=copyId;
         // Persist the resource identity before the next remote operation.
         await this.store.save(job);
         const copy=await this.verifiedCopy(job);
         if(fingerprint({...copy,id:source.id})!==job.sourceFingerprint) throw new Error("Copy baseline differs from captured source");
         if(masks.length) job.maskBaseline=await this.maskList(copy.id);
         job.status="snapshotting";await this.store.save(job);
-        const snap=await this.lr.call("create_develop_snapshot",{photo_id:job.copyId,name:`Studio baseline ${job.id}`});
+        const snap=await this.lr.call("create_develop_snapshot",{photo_id:job.copyId,name:job.snapshotName});
         const snapshot=snap.snapshot as {id?:string};
         if(typeof snapshot?.id!=="string" || !snapshot.id) throw new LightroomOutcomeUnknown("protocol_unknown");
         job.snapshotId=snapshot.id;job.status="applying";await this.store.save(job);
@@ -198,7 +206,9 @@ export class StudioHost {
         job.status="rendering";await this.store.save(job);
         const after=await this.renderStable(job.copyId!);
         if(after.equals(before)) throw new Error("Rendered preview is unchanged; possible stale Lightroom preview");
-        if(fingerprint(await this.lr.metadata(source.id))!==job.sourceFingerprint) throw new Error("Source changed during preview; inspect concurrent Lightroom activity");
+        const currentSource=await this.lr.metadata(source.id);
+        this.verifyCatalog(job,currentSource);
+        if(fingerprint(currentSource)!==job.sourceFingerprint) throw new Error("Source changed during preview; inspect concurrent Lightroom activity");
         await this.store.file(id,"after.jpg",after);
         job.renderCompleted=true;
         job.status="previewed";await this.store.save(job);
@@ -218,6 +228,58 @@ export class StudioHost {
       }
     });
   }
+  async reconcile(id: string): Promise<Job> {
+    return this.store.lock(id,async()=>{
+      const job=await this.store.load(id);
+      if(!canReconcile(job)) throw new Error("此任务无需检查中断状态。");
+      const source=await this.lr.metadata(job.source.id);
+      this.verifyCatalog(job,source);
+      if(String(source.id)!==String(job.source.id) || source.path!==job.source.path ||
+        (source.isVirtualCopy===true)!==(job.source.isVirtualCopy===true)) {
+        throw new Error("源照片身份已变更，无法检查中断任务。");
+      }
+
+      if(job.copyId===undefined) {
+        if(!job.copyName || !job.source.catalogPath) throw new Error("旧任务缺少可核对的副本标识，请在 Lightroom 中检查。");
+        const masterId=this.masterId(job);
+        if(masterId===undefined) throw new Error("任务记录缺少原照片的主照片 ID。");
+        const master=source.isVirtualCopy ? await this.lr.metadata(masterId) : source;
+        this.verifyCatalog(job,master);
+        if(master.isVirtualCopy===true || String(master.id)!==String(this.masterId(job)) || master.path!==job.source.path) {
+          throw new Error("无法确认原照片与主照片的关系。");
+        }
+        const copyIds=master.virtualCopy?.copyIds ?? [];
+        if(copyIds.length>100) throw new Error("此照片的副本较多，请在 Lightroom 中按完整副本名核对。");
+        const candidates=[];
+        for(const copyId of copyIds) {
+          if(String(copyId)===String(job.source.id)) continue;
+          const copy=await this.lr.metadata(copyId);
+          if(copy.copyName!==job.copyName) continue;
+          this.verifyCopy(job,copy,copyId);
+          candidates.push(copy.id);
+        }
+        if(candidates.length!==1) throw new Error(candidates.length ? "发现多个同名副本，请在 Lightroom 中确认。" :
+          "暂未找到此任务的副本。请确认 Lightroom 已结束原操作后再检查。");
+        job.copyId=candidates[0];
+        await this.store.save(job);
+      }
+      const copy=await this.verifiedCopy(job);
+      const snapshotName=job.snapshotName ?? `Studio baseline ${job.id}`;
+      const snapshots=await this.lr.call("list_develop_snapshots",{photo_id:copy.id});
+      if(String(snapshots.photo_id)!==String(copy.id) || !Array.isArray(snapshots.snapshots)) {
+        throw new Error("无法核对副本的 Lightroom 快照。");
+      }
+      const matches=snapshots.snapshots.filter(item=>item?.name===snapshotName &&
+        typeof item.id==="string" && (!job.snapshotId || item.id===job.snapshotId));
+      if(matches.length>1) throw new Error("发现多个匹配的快照，请在 Lightroom 中确认。");
+      job.snapshotId=matches[0]?.id;
+      job.status="failed";
+      job.recoveryNote=job.snapshotId ? "已核对副本和快照。请在 Lightroom 确认原操作已结束，再选择恢复副本。" :
+        "已找到此任务的副本。尚未找到恢复快照，请在 Lightroom 中检查该副本。";
+      await this.store.save(job);
+      return job;
+    });
+  }
   async restore(id: string): Promise<Job> {
     return this.store.lock(id,async()=>{
       const job=await this.store.load(id);
@@ -226,7 +288,7 @@ export class StudioHost {
       job.status="restoring";await this.store.save(job);
       try {
         await this.recoverCopy(job);
-        job.status="restored";job.error=undefined;job.recoveryError=undefined;job.outcomeUnknown=undefined;await this.store.save(job);return job;
+        job.status="restored";job.error=undefined;job.recoveryError=undefined;job.outcomeUnknown=undefined;job.recoveryNote=undefined;await this.store.save(job);return job;
       } catch(error) {
         job.status="failed";job.recoveryError=String(error);
         if(error instanceof LightroomOutcomeUnknown) job.outcomeUnknown=error.code;
@@ -274,16 +336,34 @@ export class StudioHost {
   }
   private async recoverCopy(job: Job) {
     const copy=await this.verifiedCopy(job);
-    await this.lr.call("apply_develop_snapshot",{photo_id:copy.id,snapshot_id:job.snapshotId});
+    const identity=job.source.catalogPath ? {
+      expected_catalog_path:job.source.catalogPath, expected_copy_name:job.copyName,
+    } : {};
+    await this.lr.call("apply_develop_snapshot",{photo_id:copy.id,snapshot_id:job.snapshotId,...identity});
     await this.verifySettings(copy.id,job.baseline);
     if(job.maskBaseline && stable(this.maskStructure(await this.maskList(copy.id)))!==stable(this.maskStructure(job.maskBaseline))) throw new Error("副本蒙版列表未恢复到预览前状态");
   }
   private async verifiedCopy(job: Job) {
-    if(job.copyId===undefined || String(job.copyId)===String(job.source.id)) throw new Error("Refusing to edit the source photo");
+    if(job.copyId===undefined) throw new Error("No virtual copy identity recorded");
     const copy=await this.lr.metadata(job.copyId);
-    const expectedMaster=job.source.isVirtualCopy ? job.source.virtualCopy?.masterPhotoId : job.source.id;
-    if(copy.isVirtualCopy!==true || String(copy.id)!==String(job.copyId) || expectedMaster===undefined || String(copy.virtualCopy?.masterPhotoId)!==String(expectedMaster) || copy.path!==job.source.path) throw new Error("Copy identity/master verification failed");
+    this.verifyCopy(job,copy,job.copyId);
     return copy;
+  }
+  private masterId(job: Job) {
+    return job.source.isVirtualCopy ? job.source.virtualCopy?.masterPhotoId : job.source.id;
+  }
+  private verifyCatalog(job: Job, photo: Photo) {
+    if(job.source.catalogPath && job.source.catalogPath!==photo.catalogPath) throw new Error("请打开此任务原先使用的 Lightroom 目录。");
+  }
+  private verifyCopy(job: Job, copy: Photo, copyId: string|number) {
+    this.verifyCatalog(job,copy);
+    if(String(copyId)===String(job.source.id)) throw new Error("Refusing to edit the source photo");
+    const expectedMaster=this.masterId(job);
+    if(copy.isVirtualCopy!==true || String(copy.id)!==String(copyId) || expectedMaster===undefined ||
+      String(copy.virtualCopy?.masterPhotoId)!==String(expectedMaster) || copy.path!==job.source.path ||
+      (job.copyName && job.source.catalogPath && copy.copyName!==job.copyName)) {
+      throw new Error("Copy identity/master verification failed");
+    }
   }
   private async verifySettings(id: string|number, expected: Settings): Promise<Settings> {
     let got: Settings={};

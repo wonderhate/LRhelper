@@ -48,6 +48,7 @@ function Window.show()
                 p.detailTab = 'diff'
                 p.busy, p.idle = false, true
                 p.canGenerate, p.canPreview, p.canRestore, p.canCancel = false, false, false, false
+                p.canReconcile = false
                 p.loading, p.listBusy = false, false
                 p.feedback, p.historyText = '', '生成并预览第一轮后，在这里继续调整。'
                 local historyPages, historyPage = { p.historyText }, 1
@@ -80,6 +81,7 @@ function Window.show()
                     p.beforeEmpty, p.afterEmpty = not p.hasBefore, not p.hasAfter
                     p.previewGuide = p.canPreview and '点击「预览副本」查看调色效果。' or '这里显示 Lightroom 渲染的虚拟副本。'
                     p.canRestore = p.idle and currentJob ~= nil and currentJob.canRestore == true
+                    p.canReconcile = p.idle and currentJob ~= nil and currentJob.canReconcile == true
                     p.canRefine = p.idle and currentJob ~= nil and currentJob.canRefine == true
                     p.canSubmitRefine = p.canRefine and p.feedback:find('%S') ~= nil
                     p.canSaveStyle = p.canRefine
@@ -135,6 +137,7 @@ function Window.show()
                     if reason and job.error and reason ~= job.error then
                         table.insert(lines, '任务记录：' .. job.error)
                     end
+                    if job.recoveryNote then table.insert(lines, 1, job.recoveryNote) end
                     if job.outcomeUnknown then
                         table.insert(lines, 1, 'Lightroom 可能仍在执行请求。请先检查副本和快照，再决定是否恢复。')
                         if job.copyId then table.insert(lines, 2, '副本 ID：' .. job.copyId) end
@@ -154,7 +157,9 @@ function Window.show()
                 end
 
                 local function resumeStatus(job)
+                    if job.recoveryNote then return job.recoveryNote end
                     if job.status == 'failed' then return failureStatus(job) end
+                    if job.canReconcile then return '任务在预览或恢复时中断。点击“核对副本”检查 Lightroom 中的记录。' end
                     if job.status == 'restored' and not job.canRefine then return '副本已恢复。本轮没有可用的预览，可重新生成方案。' end
                     if job.status == 'previewed' and not job.canRefine then return '上次预览文件不可用，可重新生成方案。' end
                     if job.status == 'planned' and not hasChanges(job) then return '当前方案无参数变化。可以修改描述或强度后重新生成。' end
@@ -417,6 +422,7 @@ function Window.show()
                 p:addObserver('batchPhotoChoice', showBatchPhoto)
 
                 local labels = { capture = '正在读取 Lightroom 照片与预览…', generate = 'Codex 正在分析照片并生成方案…', preview = '正在创建副本并由 Lightroom 渲染…', restore = '正在恢复该任务的虚拟副本…', refine = '正在准备上一轮结果…', ['save-style'] = '正在保存调色意图和参考图副本…', ['apply-style'] = '正在为当前照片适配风格…' }
+                labels.reconcile = '正在核对中断任务的副本与快照…'
                 labels['batch-plan'], labels['batch-preview'] = '正在逐张生成批次方案…', '正在逐张创建批次预览副本…'
                 local function run(action, body)
                     if not p.idle then return end
@@ -471,6 +477,7 @@ function Window.show()
                                     end
                                 elseif action == 'preview' then p.status = '预览已生成：请比较左右图。仅新虚拟副本被修改。'
                                 elseif action == 'restore' then p.status = resumeStatus(result)
+                                elseif action == 'reconcile' then p.status = resumeStatus(result); p.detailTab = 'analysis'
                                 elseif action == 'save-style' then p.status = '风格已保存：' .. body.name
                                 elseif action == 'generate' or action == 'refine' or action == 'apply-style' then
                                     p.status = resumeStatus(result)
@@ -478,7 +485,7 @@ function Window.show()
                                     if action == 'refine' then p.feedback = '' end
                                 else p.status = '照片已读取：选择调色方式并生成方案。' end
                             end
-                            if currentBatch and (action == 'preview' or action == 'restore') then openBatch(currentBatch.id, true) end
+                            if currentBatch and (action == 'preview' or action == 'restore' or action == 'reconcile') then openBatch(currentBatch.id, true) end
                             refreshWorkspace(action == 'save-style' and body.name or nil)
                         end
                     end)
@@ -615,6 +622,7 @@ function Window.show()
                             end)
                         end },
                         f:push_button { title = '恢复副本', enabled = bind 'canRestore', action = function() if currentJob then run('restore', { jobId = currentJob.id }) end end },
+                        f:push_button { title = '核对副本', enabled = bind 'canReconcile', tooltip = '核对中断任务在 Lightroom 中留下的副本和快照。此操作只读取 Lightroom。', action = function() if currentJob then run('reconcile', { jobId = currentJob.id }) end end },
                     },
                     f:static_text { title = bind 'status', width = 668, height_in_lines = 2, font = '<system/bold>' },
                     f:tab_view { value = bind 'detailTab',

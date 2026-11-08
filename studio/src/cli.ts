@@ -22,6 +22,7 @@ const HELP=`LR Codex Studio ${VERSION} — 调色、风格与局部蒙版
   show JOB_ID                    查看方案及参数差异
   preview JOB_ID                 创建虚拟副本、快照、应用、读回和真实渲染
   restore JOB_ID                 恢复该任务的虚拟副本
+  reconcile JOB_ID               核对中断任务的副本与快照（不修改照片）
   refine JOB_ID --prompt "阴影再柔和一点" [--strength 0.65]
   conversations                  列出本地会话
   history JOB_ID                 查看所属会话的轮次
@@ -43,7 +44,7 @@ async function main() {
   const command=positionals[0];
   if(values.version) { console.log(VERSION);return; }
   if(values.help || !command) { console.log(HELP);return; }
-  if(!["config","doctor","plan","show","preview","restore","serve","refine","conversations","history","styles","save-style","apply-style","export-xmp","batches","batch-show"].includes(command)) throw new Error(`Unknown command: ${command}`);
+  if(!["config","doctor","plan","show","preview","restore","reconcile","serve","refine","conversations","history","styles","save-style","apply-style","export-xmp","batches","batch-show"].includes(command)) throw new Error(`Unknown command: ${command}`);
   const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"../..");
   const config=await loadConfiguration(root,process.env);
   if(command==="config") { console.log(JSON.stringify(config,null,2));return; }
@@ -52,7 +53,7 @@ async function main() {
   process.env.STUDIO_USE_SYSTEM_PROXY=config.useSystemProxy ? "1" : "0";
   const store=new JobStore(config.jobsDirectory);
   if(command==="show") { console.log(JSON.stringify(await store.load(positionals[1]),null,2));return; }
-  if(["preview","restore"].includes(command)) store.dir(positionals[1]);
+  if(["preview","restore","reconcile"].includes(command)) store.dir(positionals[1]);
   const client=new LightroomClient(config.mcpEntry);
   const host=new StudioHost(client,new CodexRuntime(),store);
   if (command === "batches" || command === "batch-show") {
@@ -89,8 +90,9 @@ async function main() {
       const planned=await host.plan(job.id,controller.signal);
       console.log(JSON.stringify({id:planned.id,conversationId:planned.conversationId,parentJobId:planned.parentJobId,revision:planned.revision,status:planned.status,title:planned.plan?.title,analysis:planned.plan?.analysis,stepDiff:planned.stepDiff,diff:planned.diff,masks:planned.masks,skinPresence:planned.plan?.skinPresence,warnings:planned.plan?.warnings},null,2));
     } else {
-      const job=command==="preview" ? await host.preview(positionals[1]) : await host.restore(positionals[1]);
-      console.log(JSON.stringify({id:job.id,status:job.status,copyId:job.copyId,snapshotId:job.snapshotId,artifacts:store.dir(job.id)},null,2));
+      const job=command==="preview" ? await host.preview(positionals[1]) :
+        command==="reconcile" ? await host.reconcile(positionals[1]) : await host.restore(positionals[1]);
+      console.log(JSON.stringify({id:job.id,status:job.status,copyId:job.copyId,snapshotId:job.snapshotId,recoveryNote:job.recoveryNote,artifacts:store.dir(job.id)},null,2));
     }
   } finally { await client.close(); }
 }

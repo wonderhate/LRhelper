@@ -16,7 +16,7 @@ async function setup(t) {
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const sourcePath=path.join(dir,'source.raw');await writeFile(sourcePath,'fixture');
   const source={id:1,path:sourcePath,filename:'source.raw',isVirtualCopy:false,developSettings:{exposure:1,temperature:5200}};
-  const photos=new Map([[1,source]]),calls=[];
+  const photos=new Map([[1,source]]),calls=[],snapshots=[];
   const lr={
     keys:['Exposure2012','Temperature'],failWrite:false,stale:false,impostor:false,failRollback:false, mismatch:false,
     async discover(){return this.keys;},async selected(){return [{id:1}];},
@@ -25,10 +25,15 @@ async function setup(t) {
     async call(name,args){
       calls.push({name,args});
       if(name==='create_virtual_copies'){
-        photos.set(2,{...structuredClone(source),id:2,isVirtualCopy:!this.impostor,virtualCopy:{masterPhotoId:1}});
+        photos.set(2,{...structuredClone(source),id:2,isVirtualCopy:!this.impostor,copyName:args.copy_name,virtualCopy:{masterPhotoId:1}});
+        source.virtualCopy={copyIds:[2]};
         return {created:1,copies:[{photo_id:1,copy_id:2}]};
       }
-      if(name==='create_develop_snapshot')return {success:true,snapshot:{id:'snapshot-1'}};
+      if(name==='create_develop_snapshot'){
+        const snapshot={id:'snapshot-1',name:args.name};snapshots.push(snapshot);
+        return {success:true,snapshot};
+      }
+      if(name==='list_develop_snapshots')return {photo_id:args.photo_id,snapshots:structuredClone(snapshots)};
       if(name==='set_develop_settings'){
         if(this.failWrite)throw new Error('write failed');
         if(!this.mismatch) photos.get(2).developSettings.exposure=args.settings.Exposure2012;
@@ -113,6 +118,37 @@ test('job lock prevents duplicate side effects across concurrent preview request
   const results=await Promise.allSettled([f.host.preview(job.id),f.host.preview(job.id)]);
   assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
   assert.equal(f.calls.filter(c=>c.name==='create_virtual_copies').length,1);
+});
+test('reconciliation finds a copy and snapshot left before their acknowledgements and only reads Lightroom', async t => {
+  const f=await setup(t); f.source.catalogPath=path.join(f.dir,'test.lrcat');
+  const captured=await f.capture(), job=await f.host.plan(captured.id);
+  job.status='creating-copy';
+  job.copyName=`Studio ${job.id}`;
+  job.snapshotName=`Studio baseline ${job.id}`;
+  await f.store.save(job);
+  await f.lr.call('create_virtual_copies',{photo_ids:[1],copy_name:job.copyName});
+
+  f.source.catalogPath=path.join(f.dir,'other.lrcat');
+  await assert.rejects(f.host.reconcile(job.id),/原先使用的 Lightroom 目录/);
+  f.source.catalogPath=job.source.catalogPath;
+  f.photos.set(3,{...structuredClone(f.photos.get(2)),id:3});
+  f.source.virtualCopy.copyIds.push(3);
+  await assert.rejects(f.host.reconcile(job.id),/多个同名/);
+  f.source.virtualCopy.copyIds.pop();
+
+  const found=await f.host.reconcile(job.id);
+  assert.equal(found.copyId,2);assert.equal(found.snapshotId,undefined);
+  assert.match(found.recoveryNote,/尚未找到恢复快照/);
+  await f.lr.call('create_develop_snapshot',{photo_id:2,name:job.snapshotName});
+  const priorCalls=f.calls.length;
+  const checked=await f.host.reconcile(job.id);
+  assert.equal(checked.snapshotId,'snapshot-1');
+  assert.deepEqual(f.calls.slice(priorCalls).map(call=>call.name),['list_develop_snapshots']);
+  assert.equal((await f.host.restore(job.id)).status,'restored');
+  const restored=f.calls.at(-1);
+  assert.equal(restored.args.expected_catalog_path,job.source.catalogPath);
+  assert.equal(restored.args.expected_copy_name,job.copyName);
+  assert.equal(restored.args.photo_id,2);
 });
 test('the operation lock waits for a live owner and reclaims only after process exit', {
   skip: !['win32','linux'].includes(process.platform),

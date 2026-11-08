@@ -1,8 +1,7 @@
-import { mkdir, writeFile, rename, unlink, access, readdir } from "node:fs/promises";
+import { mkdir, access, readdir } from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import type { Job } from "./types.js";
-import { imageLimit, isRecordId, localFilePath, readRecord } from "./local-files.js";
+import { imageLimit, isRecordId, localFilePath, readRecord, writeAtomic } from "./local-files.js";
 import { validJob } from "./journal-schema.js";
 import { withOperationLock } from "./operation-lock.js";
 
@@ -14,13 +13,14 @@ export class JobStore {
   }
   async create(job: Job) { await mkdir(this.dir(job.id),{recursive:true}); await this.save(job); }
   async save(job: Job) {
-    const file=path.join(this.dir(job.id),"job.json"), temp=`${file}.${randomUUID()}.tmp`;
-    await writeFile(temp,JSON.stringify(job,null,2),{mode:0o600}); await rename(temp,file);
+    await writeAtomic(path.join(this.dir(job.id),"job.json"),JSON.stringify(job,null,2));
   }
   async load(id: string): Promise<Job> {
     const problem = "任务记录无效";
     const job=await readRecord(this.dir(id),"job.json",problem);
-    if(!validJob(job) || job.id!==id) throw new Error(problem);
+    if(!validJob(job) || job.id!==id ||
+      (job.copyName!==undefined && job.copyName!==`Studio ${id}`) ||
+      (job.snapshotName!==undefined && job.snapshotName!==`Studio baseline ${id}`)) throw new Error(problem);
     return job;
   }
   async list(): Promise<Job[]> {
@@ -37,13 +37,7 @@ export class JobStore {
     return withOperationLock(this.dir(id),fn);
   }
   async file(id: string, name: string, data: Buffer) {
-    const file=path.join(this.dir(id),name), temp=`${file}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temp,data,{mode:0o600});
-      await rename(temp,file);
-    } finally {
-      await unlink(temp).catch(() => {});
-    }
+    await writeAtomic(path.join(this.dir(id),name),data);
   }
 }
 
@@ -51,6 +45,12 @@ export async function hasVerifiedPreview(job: Job, directory: string): Promise<b
   if (!job.plan || job.renderCompleted === false || (job.status !== "previewed" && job.status !== "restored")) return false;
   // Existing jobs predate renderCompleted. Require their successfully published file.
   return !!await localFilePath(directory, "after.jpg", imageLimit, "预览文件不可用").catch(() => undefined);
+}
+
+const interrupted = new Set<Job["status"]>(["creating-copy", "snapshotting", "applying", "rendering", "restoring"]);
+export function canReconcile(job: Job): boolean {
+  return interrupted.has(job.status) || !!job.outcomeUnknown ||
+    (job.status === "failed" && !!job.copyName && (job.copyId === undefined || !job.snapshotId));
 }
 export async function available(file: string) {
   await access(file).catch(()=>{throw new Error(`Source file is unavailable: ${file}`);});

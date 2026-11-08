@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, open, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const recordIdPattern = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
@@ -50,5 +51,15 @@ export async function readRecord(directory: string, name: string, errorMessage: 
     return JSON.parse(data.toString("utf8"));
   } catch {
     throw new Error(errorMessage);
+  }
+}
+
+export async function writeAtomic(filename: string, data: string | Buffer): Promise<void> {
+  const temporary = `${filename}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, data, { flag: "wx", mode: 0o600, flush: true });
+    await rename(temporary, filename);
+  } finally {
+    await unlink(temporary).catch(() => {});
   }
 }

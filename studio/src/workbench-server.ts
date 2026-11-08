@@ -8,13 +8,13 @@ import type { StudioHost } from "./studio-host.js";
 import { parseBatchPhotos, type BatchView } from "./batch-queue.js";
 import { defaultHostFile } from "./configuration.js";
 import { VERSION } from "./version.js";
-import { hasVerifiedPreview } from "./job-store.js";
+import { canReconcile, hasVerifiedPreview } from "./job-store.js";
 import { imageLimit, localFilePath } from "./local-files.js";
 
 interface Task {
   id: string;
   state: "running" | "completed" | "failed";
-  stage: "capture" | "generate" | "preview" | "restore" | "refine" | "save-style" | "apply-style" | "batch-plan" | "batch-preview";
+  stage: "capture" | "generate" | "preview" | "restore" | "reconcile" | "refine" | "save-style" | "apply-style" | "batch-plan" | "batch-preview";
   cancellable: boolean;
   job?: Awaited<ReturnType<typeof jobView>>;
   batch?: BatchView;
@@ -71,6 +71,7 @@ export async function jobView(job: Job, host: StudioHost) {
     conversationId:job.conversationId ?? job.id,revision:job.revision ?? 1,parentJobId:job.parentJobId,
     canRefine,styleName:job.styleName,
     canRestore: job.copyId !== undefined && !!job.snapshotId,
+    canReconcile: canReconcile(job), recoveryNote: job.recoveryNote,
     title: job.plan?.title ?? "照片已读取",
     analysis: analysis ? [...Object.values(analysis), ...plan.warnings].filter(Boolean).join("\n\n") : sections,
     displayAnalysis: sections,
@@ -208,7 +209,7 @@ export class WorkbenchServer {
         const body = await requestBody(req);
         if (this.active || this.closing) {this.send(res,409,{error:"已有任务进行中，请等待完成"});return;}
         const fields: Record<Task["stage"], string[]> = {
-          capture:["photoId"],generate:["photoId","request"],preview:["jobId"],restore:["jobId"],refine:["jobId","feedback","strength","localMasks"],
+          capture:["photoId"],generate:["photoId","request"],preview:["jobId"],restore:["jobId"],reconcile:["jobId"],refine:["jobId","feedback","strength","localMasks"],
           "save-style":["jobId","name"],"apply-style":["styleId","photoId","strength","extra","localMasks"],
           "batch-plan":["styleId","photoIds","strength"],"batch-preview":["batchId"],
         };
@@ -218,7 +219,7 @@ export class WorkbenchServer {
         if (body.localMasks!==undefined && typeof body.localMasks!=="boolean") throw new Error("局部蒙版选项无效");
         if (body.photoId !== undefined && (typeof body.photoId !== "string" || !/^\d+$/.test(body.photoId))) throw new Error("照片 ID 无效");
         const request = action === "generate" ? parseGenerateRequest(body.request) : undefined;
-        if (["preview","restore","refine","save-style"].includes(action)) this.host.store.dir(String(body.jobId));
+        if (["preview","restore","reconcile","refine","save-style"].includes(action)) this.host.store.dir(String(body.jobId));
         if(action==="refine" && (typeof body.feedback!=="string" || !body.feedback.trim() || body.feedback.length>8000)) throw new Error("请填写 1–8000 字符的调整意见");
         if(body.strength!==undefined && (typeof body.strength!=="number" || !Number.isFinite(body.strength) || body.strength<0 || body.strength>1)) throw new Error("强度必须在 0–1 之间");
         if(action==="save-style" && (typeof body.name!=="string" || !body.name.trim() || body.name.trim().length>80)) throw new Error("风格名称需要 1–80 个字符");
@@ -256,15 +257,16 @@ export class WorkbenchServer {
             } else {
               task.job = await jobView(await this.host.store.load(String(body.jobId)),this.host);
               if(action==="save-style") {await this.host.saveStyle(String(body.jobId),body.name as string);job=await this.host.store.load(String(body.jobId));}
+              else if(action==="reconcile") job=await this.host.reconcile(String(body.jobId));
               else job = action === "preview" ? await this.host.preview(String(body.jobId)) : await this.host.restore(String(body.jobId));
             }
             task.job = await jobView(job,this.host);task.state = "completed";
           } catch (error) {
             task.error = controller.signal.aborted ? "生成已停止，可重新生成方案。" : String(error);
-            task.state = "failed";
             if (task.job) {
               try {task.job = await jobView(await this.host.store.load(task.job.id),this.host);} catch { /* Keep the primary error if the journal is unavailable. */ }
             }
+            task.state = "failed";
           } finally {task.cancellable = false;this.active = undefined;}
         };
         // Claim the slot before starting any asynchronous Lightroom operation.

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { withOperationLock } from "./operation-lock.js";
+import { canReconcile } from "./job-store.js";
 import type { StudioHost } from "./studio-host.js";
 import type { Job } from "./types.js";
-import { isRecordId, readRecord } from "./local-files.js";
+import { isRecordId, readRecord, writeAtomic } from "./local-files.js";
 import { validBatch } from "./journal-schema.js";
 
 const maxPhotos = 8;
@@ -65,10 +66,7 @@ export class BatchQueue {
   }
 
   private async save(batch: Batch) {
-    const file = path.join(this.dir(batch.id), "batch.json");
-    const temporary = `${file}.${randomUUID()}.tmp`;
-    await writeFile(temporary, JSON.stringify(batch, null, 2), { mode: 0o600 });
-    await rename(temporary, file);
+    await writeAtomic(path.join(this.dir(batch.id), "batch.json"), JSON.stringify(batch, null, 2));
   }
 
   async list() {
@@ -109,16 +107,20 @@ export class BatchQueue {
           : item.planError ? "failed" : job?.status ?? "queued";
         return {
           photoId: item.photoId, jobId: job?.id, filename: job?.source.filename, status,
-          canPreview: this.canPreview(item, job), detail: job?.recoveryError ?? item.previewError ?? item.planError ?? job?.error,
+          canPreview: this.canPreview(item, job),
+          needsReview: !!job && (canReconcile(job) || !!job.recoveryError),
+          detail: job?.recoveryNote ?? job?.recoveryError ?? item.previewError ?? item.planError ?? job?.error,
         };
       } catch {
-        return { photoId: item.photoId, status: "failed", canPreview: false, detail: "照片任务记录无法读取" };
+        return { photoId: item.photoId, status: "failed", canPreview: false, needsReview: true, detail: "照片任务记录无法读取" };
       }
     }));
+    const previousBlock = items.find(item => item.photoId === batch.blockedByPhotoId && item.status !== "restored");
+    const blockedByPhotoId = (previousBlock ?? items.find(item => item.needsReview))?.photoId;
     return {
-      id: batch.id, styleName: batch.styleName, strength: batch.strength, items, progress, blockedByPhotoId: batch.blockedByPhotoId,
+      id: batch.id, styleName: batch.styleName, strength: batch.strength, items, progress, blockedByPhotoId,
       state: batch.state === "planning" && !progress ? "interrupted" : batch.state,
-      previewable: batch.blockedByPhotoId ? 0 : items.filter(item => item.canPreview).length,
+      previewable: blockedByPhotoId ? 0 : items.filter(item => item.canPreview).length,
     };
   }
 
@@ -157,7 +159,11 @@ export class BatchQueue {
   async preview(id: string, publish: (view: BatchView) => void) {
     return withOperationLock(this.dir(id), async () => {
       const batch = await this.load(id);
-      if (batch.blockedByPhotoId) throw new Error("本批次已停止，请检查相关副本与恢复状态");
+      if ((await this.view(batch)).blockedByPhotoId) throw new Error("本批次已停止，请检查相关副本与恢复状态");
+      if (batch.blockedByPhotoId) {
+        batch.blockedByPhotoId = undefined;
+        await this.save(batch);
+      }
       const eligible: BatchItem[] = [];
       for (const item of batch.items) {
         const job = await this.readItem(item).catch(() => undefined);

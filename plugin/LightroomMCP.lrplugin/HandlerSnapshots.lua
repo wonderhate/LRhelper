@@ -64,6 +64,13 @@ end
 function Handler.apply(args)
     nonempty(args.snapshot_id, 'snapshot_id')
     local catalog, photo = resolve(args)
+    if args.expected_catalog_path and catalog:getPath() ~= args.expected_catalog_path then
+        error('The active catalog does not match the recorded snapshot catalog')
+    end
+    if args.expected_copy_name and (not photo:getRawMetadata('isVirtualCopy')
+        or photo:getFormattedMetadata('copyName') ~= args.expected_copy_name) then
+        error('The target does not match the recorded virtual copy')
+    end
     find(photo, args.snapshot_id)
     DevelopSession.withPhoto('apply_develop_snapshot', catalog, photo, function()
         catalog:withWriteAccessDo('Apply Develop Snapshot', function()
