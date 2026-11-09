@@ -133,6 +133,7 @@ export class WorkspaceStorage {
 
   private async moveToTrash(kind: Kind,id: string,entries: Entry[],moves: MoveLockedDirectory[]) {
     if (kind==="conversation") {
+      if ((await this.entries(kind,id)).length!==entries.length) throw new Error("会话刚有新轮次，请刷新后再操作。");
       for (const entry of entries) {
         const job=await this.jobs.load(entry.id);
         if (canReconcile(job) || job.recoveryError) throw new Error("此会话还有待核对的副本，请先完成恢复。");

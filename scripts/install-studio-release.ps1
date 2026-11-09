@@ -90,6 +90,28 @@ function Clear-RetiredStudioVersions {
     }
 }
 
+function Clear-InterruptedStudioStaging {
+    foreach ($studioMarker in Get-ChildItem -LiteralPath $studioInstallRoot -File -Filter 'staging-*.marker') {
+        if ($studioMarker.Name -notmatch '^(staging-[a-f0-9]{32})\.marker$' -or ($studioMarker.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+        $studioName = $Matches[1]
+        if ((Get-Content -LiteralPath $studioMarker.FullName -Raw) -ne 'LR Codex Studio staging') { continue }
+        try {
+            if (Test-Path -LiteralPath (Join-Path $studioInstallRoot $studioName)) {
+                Remove-StudioManagedDirectory $studioInstallRoot $studioName '^staging-[a-f0-9]{32}$'
+            }
+            Remove-Item -LiteralPath $studioMarker.FullName -Force
+        } catch { Write-Warning 'A temporary install folder could not be verified or cleaned. It was kept.' }
+    }
+}
+
+function Install-StudioManagementScripts {
+    Copy-Item -LiteralPath (Join-Path $studioCurrent 'scripts/studio-host-common.ps1') -Destination (Join-Path $studioInstallRoot 'studio-host-common.ps1') -Force
+    foreach ($studioEntry in @('Rollback.ps1','Repair.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $studioCurrent 'scripts/install-studio-release.ps1') -Destination (Join-Path $studioInstallRoot $studioEntry) -Force
+    }
+    Copy-Item -LiteralPath (Join-Path $studioCurrent 'scripts/uninstall-studio-release.ps1') -Destination (Join-Path $studioInstallRoot 'Uninstall.ps1') -Force
+}
+
 Invoke-WithStudioHostLock {
     $studioHostRecord = Get-StudioHostRecord
     if ((Get-StudioHostHealth $studioHostRecord).ok -or ($studioHostRecord -and (Get-Process -Id $studioHostRecord.pid -ErrorAction SilentlyContinue | Where-Object ProcessName -eq node))) {
@@ -103,6 +125,8 @@ Invoke-WithStudioHostLock {
     Complete-StudioSwitch
     if ($Repair) {
         $studioRepaired = Read-StudioRelease $studioCurrent -Verify
+        if ($studioRepaired.schema -eq 2) { Install-StudioManagementScripts }
+        Clear-InterruptedStudioStaging
         Clear-RetiredStudioVersions
         Write-Output ('Verified active Studio version: ' + $studioRepaired.version)
         return
@@ -120,10 +144,13 @@ Invoke-WithStudioHostLock {
     }
     $studioCandidate = $studioSource
     $studioStagingName = ''
+    $studioMarkerPath = ''
     try {
         if (-not $Rollback) {
             $studioStagingName = 'staging-' + [Guid]::NewGuid().ToString('N')
             $studioCandidate = Join-Path $studioInstallRoot $studioStagingName
+            $studioMarkerPath = $studioCandidate + '.marker'
+            [IO.File]::WriteAllText($studioMarkerPath,'LR Codex Studio staging')
             & robocopy.exe $studioSource $studioCandidate /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /XJ /NFL /NDL /NJH /NJS /NP | Out-Null
             if ($LASTEXITCODE -ge 8) { throw "Could not stage the Windows release (Robocopy exit $LASTEXITCODE)." }
         }
@@ -136,17 +163,14 @@ Invoke-WithStudioHostLock {
         try { Move-Item -LiteralPath $studioCandidate -Destination $studioCurrent }
         catch { Complete-StudioSwitch; throw }
         Complete-StudioSwitch
-        if (-not $Rollback) {
-            Copy-Item -LiteralPath (Join-Path $studioCurrent 'scripts/studio-host-common.ps1') -Destination (Join-Path $studioInstallRoot 'studio-host-common.ps1') -Force
-            foreach ($studioEntry in @('Rollback.ps1','Repair.ps1')) {
-                Copy-Item -LiteralPath (Join-Path $studioCurrent 'scripts/install-studio-release.ps1') -Destination (Join-Path $studioInstallRoot $studioEntry) -Force
-            }
-            Copy-Item -LiteralPath (Join-Path $studioCurrent 'scripts/uninstall-studio-release.ps1') -Destination (Join-Path $studioInstallRoot 'Uninstall.ps1') -Force
-        }
+        if (-not $Rollback) { Install-StudioManagementScripts }
         Clear-RetiredStudioVersions
     } finally {
         if ($studioStagingName -and (Test-Path -LiteralPath $studioCandidate)) {
             Remove-StudioManagedDirectory $studioInstallRoot $studioStagingName '^staging-[a-f0-9]{32}$'
+        }
+        if ($studioMarkerPath -and (Test-Path -LiteralPath $studioMarkerPath -PathType Leaf)) {
+            Remove-Item -LiteralPath $studioMarkerPath -Force
         }
     }
     Write-Output ('Active Studio version: ' + $studioRelease.version)

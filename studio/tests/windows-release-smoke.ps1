@@ -98,8 +98,12 @@ try {
         Write-Output ('Packaged Lightroom read and render succeeded, settings discovered: ' + $studioCapture.capabilities)
     }
     & (Join-Path $studioScripts 'stop-studio-host.ps1')
+    $studioInterrupted = Join-Path $studioInstall ('staging-' + [Guid]::NewGuid().ToString('N'))
+    [void](New-Item -ItemType Directory -Path $studioInterrupted)
+    [IO.File]::WriteAllText(($studioInterrupted + '.marker'),'LR Codex Studio staging')
     Move-Item -LiteralPath $studioCurrent -Destination (Join-Path $studioInstall 'switching')
     & (Join-Path $studioInstall 'Repair.ps1')
+    if ((Test-Path -LiteralPath $studioInterrupted) -or (Test-Path -LiteralPath ($studioInterrupted + '.marker'))) { throw 'Repair left verified interrupted staging.' }
     Assert-StudioVersion $studioRelease.version
     & (Join-Path $studioInstall 'Rollback.ps1')
     Assert-StudioVersion $studioPriorVersion

@@ -86,7 +86,8 @@ describe("HandlerMetadata.getPhotoMetadata", function()
             sections = { "developSettings", "developSettings" } })
         assert.are.same(full, duplicate)
         assert.are.same({ exposure = 0.5, contrast = 42 }, full.developSettings)
-        full.developSettings = nil
+        assert.are.equal("/test.lrcat", full.catalogPath)
+        full.developSettings, full.catalogPath = nil, nil
         assert.are.same(default, full)
         assert.are.equal(2, reads)
     end)

@@ -151,23 +151,25 @@ export class BatchQueue {
     };
     if (!Number.isFinite(batch.strength) || batch.strength < 0 || batch.strength > 1) throw new Error("强度必须在 0–1 之间");
     await mkdir(this.dir(batch.id), { recursive: true });
-    await this.save(batch);
-    for (const [index, item] of batch.items.entries()) {
-      if (signal.aborted) break;
-      publish(await this.view(batch, { stage: "planning", current: index + 1, total: ids.length }));
-      if (signal.aborted) break;
-      try {
-        const job = await this.host.captureStyle(styleId, item.photoId, batch.strength, "", item.jobId, undefined, signal);
-        if (!signal.aborted) await this.host.plan(job.id, signal);
-      } catch (error) {
+    return withOperationLock(this.dir(batch.id), async () => {
+      await this.save(batch);
+      for (const [index, item] of batch.items.entries()) {
         if (signal.aborted) break;
-        item.planError = String(error);
-        await this.save(batch);
+        publish(await this.view(batch, { stage: "planning", current: index + 1, total: ids.length }));
+        if (signal.aborted) break;
+        try {
+          const job = await this.host.captureStyle(styleId, item.photoId, batch.strength, "", item.jobId, undefined, signal);
+          if (!signal.aborted) await this.host.plan(job.id, signal);
+        } catch (error) {
+          if (signal.aborted) break;
+          item.planError = String(error);
+          await this.save(batch);
+        }
       }
-    }
-    batch.state = signal.aborted ? "stopped" : "finished";
-    await this.save(batch);
-    return this.view(batch);
+      batch.state = signal.aborted ? "stopped" : "finished";
+      await this.save(batch);
+      return this.view(batch);
+    });
   }
 
   async preview(id: string, publish: (view: BatchView) => void, signal?: AbortSignal) {
