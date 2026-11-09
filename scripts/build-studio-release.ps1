@@ -86,8 +86,14 @@ try {
         $studioPackagePrefix = $studioPackage.TrimEnd('\') + '\'
         foreach ($studioFile in $studioPaths) {
             $studioRelative = $studioFile.Substring($studioPackagePrefix.Length).Replace('\','/')
-            $studioEntry = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($studioZipStream,$studioFile,$studioRelative,[IO.Compression.CompressionLevel]::Optimal)
+            $studioEntry = $studioZipStream.CreateEntry($studioRelative,[IO.Compression.CompressionLevel]::Optimal)
             $studioEntry.LastWriteTime = [DateTimeOffset]::new(1980,1,1,0,0,0,[TimeSpan]::Zero)
+            $studioInput = [IO.File]::OpenRead($studioFile)
+            try {
+                $studioEntryStream = $studioEntry.Open()
+                try { $studioInput.CopyTo($studioEntryStream) }
+                finally { $studioEntryStream.Dispose() }
+            } finally { $studioInput.Dispose() }
         }
     } finally { $studioZipStream.Dispose() }
     Move-Item -LiteralPath $studioTempZip -Destination $studioZip

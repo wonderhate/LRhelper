@@ -10,13 +10,17 @@ permissions:
 
 jobs:
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24.19.0']
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: |
             server/package-lock.json
@@ -34,7 +38,14 @@ jobs:
         run: |
           npm --prefix server run check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix server run lint
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix server test -- --runInBand
+      - name: Live-kit unit tests
+        run: node --test "tests/e2e/live/unit/*.test.mjs"
+      - name: Bundled skill tests
+        working-directory: skills/raw-photo-lightroom-preset
+        run: python -m unittest discover -s tests -v
       - name: Native Lua controller tests
         shell: pwsh
         run: |
@@ -42,8 +53,28 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python studio/tests/lua-workbench.py
       - name: Build and exercise the Windows installer
+        if: matrix.node == '24.19.0'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           ./scripts/build-studio-release.ps1
-          $archive = Get-ChildItem build/studio -Filter '*.zip' | Select-Object -ExpandProperty FullName
-          powershell.exe -NoProfile -File studio/tests/windows-release-smoke.ps1 -Package $archive
+          ./scripts/test-studio-release.ps1
+  lua:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Run Lua 5.1 specs
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes lua5.1 lua-busted
+          lua5.1 /usr/bin/busted
+      - name: Run Selene
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download 0.32.0 -R Kampfkarren/selene -p selene-0.32.0-linux.zip -D "$RUNNER_TEMP"
+          printf '%s  %s\n' d3773393578580074386e69337d35b7acddfbaa9fc38964c07fa3e28436ade9b "$RUNNER_TEMP/selene-0.32.0-linux.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/selene-0.32.0-linux.zip" -d "$RUNNER_TEMP/selene"
+          "$RUNNER_TEMP/selene/selene" plugin/LightroomMCP.lrplugin

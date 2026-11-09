@@ -1,0 +1,42 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    if: github.repository == 'wonderhate/LRhelper'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            studio/package-lock.json
+      - name: Build and test the tagged source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/build-studio-release.ps1 -Tag $env:GITHUB_REF_NAME
+          ./scripts/test-studio-release.ps1
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: build/studio/LR-Codex-Studio-*-Windows-x64.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: LRhelper-Windows-x64
+          path: |
+            build/studio/LR-Codex-Studio-*-Windows-x64.zip
+            build/studio/LR-Codex-Studio-*-Windows-x64.zip.sha256
+          if-no-files-found: error

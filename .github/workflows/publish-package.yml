@@ -43,6 +43,26 @@ jobs:
           expected="$(cut -d ' ' -f 1 "$archive.sha256")"
           [[ "$expected" =~ ^[a-f0-9]{64}$ ]]
           printf '%s  %s\n' "$expected" "$archive" | sha256sum --check
+          if [[ "$RELEASE_TAG" == "v1.0.0" ]]; then
+            [[ "$expected" == "e5d8344d8f1ac0d3ffea3ce43af401f7b7bc2f113974a264fb8fd42ce6d232e1" ]]
+          else
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" \
+              --cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/build-release.yml@refs/tags/$RELEASE_TAG"
+            commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+            python3 - "$archive" "$version" "$RELEASE_TAG" "$commit" <<'PY'
+          import hashlib, json, sys, zipfile
+          archive, version, tag, commit = sys.argv[1:]
+          with zipfile.ZipFile(archive) as package:
+              manifest = json.loads(package.read("app/release.json"))
+              assert manifest["schema"] == 2 and manifest["version"] == version
+              assert manifest["platform"] == "win32" and manifest["arch"] == "x64"
+              assert manifest["source"] == {"tag": tag, "commit": commit}
+              payload = [name for name in package.namelist() if name.startswith("app/") and name != "app/release.json"]
+              assert len(payload) == len(manifest["files"]) and len(set(payload)) == len(payload)
+              for name in payload:
+                  assert hashlib.sha256(package.read(name)).hexdigest() == manifest["files"][name[4:]]
+          PY
+          fi
           printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           oras push "$target" \
             --artifact-type application/vnd.wonderhate.lrhelper.windows.v1+zip \
@@ -52,7 +72,10 @@ jobs:
             --annotation "org.opencontainers.image.version=$version" \
             --annotation "org.opencontainers.image.documentation=https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" \
             "$archive:application/zip" "$archive.sha256:text/plain"
-          oras pull "$target" --output "$RUNNER_TEMP/lrhelper-verified"
+          digest="$(oras resolve "$target")"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          immutable="${target%:*}@$digest"
+          oras pull "$immutable" --output "$RUNNER_TEMP/lrhelper-verified"
           cmp "$archive" "$RUNNER_TEMP/lrhelper-verified/$archive"
           cmp "$archive.sha256" "$RUNNER_TEMP/lrhelper-verified/$archive.sha256"
-          printf 'Verified package: `%s`\n\nZIP SHA-256: `%s`\n' "$target" "$expected" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Verified package: `%s`\n\nImmutable reference: `%s`\n\nZIP SHA-256: `%s`\n' "$target" "$immutable" "$expected" >> "$GITHUB_STEP_SUMMARY"
