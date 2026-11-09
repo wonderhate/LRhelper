@@ -43,3 +43,27 @@ function Get-StudioLogDirectory([string]$Root) {
     }
     return Join-Path $Root '.studio/logs'
 }
+
+function Get-StudioRegularFiles([string]$Directory) {
+    $studioStart = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
+    if (-not $studioStart.PSIsContainer -or ($studioStart.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Managed directory is invalid or linked.' }
+    $studioQueue = [Collections.Generic.Queue[string]]::new()
+    $studioQueue.Enqueue($studioStart.FullName)
+    while ($studioQueue.Count) {
+        foreach ($studioChild in Get-ChildItem -LiteralPath ($studioQueue.Dequeue()) -Force) {
+            if ($studioChild.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'A managed directory contains a linked file or folder.' }
+            if ($studioChild.PSIsContainer) { $studioQueue.Enqueue($studioChild.FullName) }
+            else { $studioChild }
+        }
+    }
+}
+
+function Remove-StudioManagedDirectory([string]$Root, [string]$Name, [string]$ExpectedName) {
+    if ($Name -notmatch $ExpectedName -or [IO.Path]::GetFileName($Name) -cne $Name) { throw 'Invalid managed directory name.' }
+    $studioRoot = Get-Item -LiteralPath $Root -Force -ErrorAction Stop
+    if (-not $studioRoot.PSIsContainer -or ($studioRoot.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Managed root is invalid or linked.' }
+    $studioTarget = Get-Item -LiteralPath (Join-Path $studioRoot.FullName $Name) -Force -ErrorAction Stop
+    if ($studioTarget.Parent.FullName -ne $studioRoot.FullName -or $studioTarget.Name -cne $Name) { throw 'Managed directory is outside the install root.' }
+    $null = Get-StudioRegularFiles $studioTarget.FullName
+    Remove-Item -LiteralPath $studioTarget.FullName -Recurse -Force
+}

@@ -24,11 +24,11 @@ export function startHeartbeat(
   dispatcher: HeartbeatDispatcher,
   intervalMs: number,
   onError: (err: Error) => void = (err) => console.error(`[heartbeat] ping failed: ${err.message}`),
-  onSuccess: () => void = () => {},
+  onSuccess: (reply: unknown) => void = () => {},
 ): NodeJS.Timeout {
   return setInterval(() => {
     dispatcher.call("ping", {}).then(
-      () => onSuccess(),
+      onSuccess,
       (err: Error) => onError(err),
     );
   }, intervalMs);
@@ -41,9 +41,11 @@ export function startHeartbeat(
 export async function probePlugin(
   dispatcher: HeartbeatDispatcher,
   timeoutMs?: number,
+  onResponse?: (reply: unknown) => void,
 ): Promise<boolean> {
   try {
-    await dispatcher.call("ping", {}, timeoutMs);
+    const reply = await dispatcher.call("ping", {}, timeoutMs);
+    onResponse?.(reply);
     return true;
   } catch {
     return false;

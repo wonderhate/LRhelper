@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { PluginSocket } from "./plugin-socket.js";
 import { Dispatcher } from "./dispatcher.js";
 import { readToken } from "./token.js";
-import { requestPort, responsePort } from "./ports.js";
+import { bridgePorts } from "./ports.js";
 import { parseToolsets, type Toolset } from "./toolsets.js";
 import { parseReadOnly } from "./read-only.js";
 import { createMcpServer } from "./create-server.js";
@@ -21,6 +21,8 @@ import { waitUntil } from "./wait-until.js";
 import { diagnoseUnresponsive, UnresponsiveReporter } from "./port-owner.js";
 import { acquireInstanceLock, lockHolder, lockHolderUnresponsive } from "./instance-lock.js";
 import { logDiagnostic } from "./log-safety.js";
+import { BRIDGE_PROTOCOL, UPDATE_BRIDGE_MESSAGE, isCompatiblePlugin } from "./bridge-identity.js";
+import { TOOL_CONTRACTS } from "./tool-contracts.js";
 import {
   ensurePluginInstalled,
   findBundledPlugin,
@@ -69,6 +71,7 @@ const SHUTDOWN_GRACE_MS = Math.max(REQUEST_TIMEOUT_MS, ...Object.values(ACTION_T
 const SHUTDOWN_EXIT_MARGIN_MS = 1_000;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const writeTools = new Set(TOOL_CONTRACTS.filter(tool => !tool.annotations.readOnlyHint).map(tool => tool.name));
 
 async function main() {
   let cli;
@@ -99,14 +102,13 @@ async function main() {
   try {
     toolsets = parseToolsets(process.env.LIGHTROOM_MCP_TOOLSETS);
     readOnly = parseReadOnly(process.env.LIGHTROOM_MCP_READ_ONLY);
-    REQUEST_PORT = requestPort();
-    RESPONSE_PORT = responsePort();
+    ({ request: REQUEST_PORT, response: RESPONSE_PORT } = bridgePorts());
   } catch (err) {
     logDiagnostic((err as Error).message);
     process.exit(1);
   }
 
-  ensurePluginInstalled(here, logDiagnostic);
+  if (process.env.LIGHTROOM_MCP_SKIP_AUTO_INSTALL !== "1") ensurePluginInstalled(here, logDiagnostic);
 
   const bridge = new Bridge({
     ipcPath: brokerPath(REQUEST_PORT, RESPONSE_PORT),
@@ -115,6 +117,7 @@ async function main() {
     readToken: tryReadToken,
     holderUnresponsive: () => lockHolderUnresponsive(REQUEST_PORT, RESPONSE_PORT),
     lockHolder: () => lockHolder(REQUEST_PORT, RESPONSE_PORT),
+    needsCompatibleOwner: name => writeTools.has(name) || name === "get_bridge_status",
     log: logDiagnostic,
   });
 
@@ -166,6 +169,7 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
     log: logDiagnostic,
   });
   const liveness = new PluginLiveness();
+  let pluginReply: unknown;
   let recoveryTimer: NodeJS.Timeout | null = null;
   const unresponsive = new UnresponsiveReporter({
     diagnose: () => diagnoseUnresponsive([REQUEST_PORT, RESPONSE_PORT]),
@@ -174,8 +178,10 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
   const probeOnConnect = () => {
     const token = liveness.beginProbe();
     if (token === null) return;
-    void probePlugin(dispatcher, PROBE_TIMEOUT_MS).then((answered) => {
+    let reply: unknown;
+    void probePlugin(dispatcher, PROBE_TIMEOUT_MS, (value) => { reply = value; }).then((answered) => {
       if (!liveness.settleProbe(token, answered)) return;
+      pluginReply = reply;
       if (answered) {
         unresponsive.clear();
         if (recoveryTimer) {
@@ -201,6 +207,7 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
       onLine: (line) => dispatcher.handleResponseLine(line),
       onConnect: () => probeOnConnect(),
       onDisconnect: () => {
+        pluginReply = undefined;
         liveness.reset();
         unresponsive.clear();
         dispatcher.rejectAll();
@@ -209,6 +216,7 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
     responseSocket.connect();
   };
   const stopResponseSocket = () => {
+    pluginReply = undefined;
     liveness.reset();
     unresponsive.clear();
     if (responseConnectTimer) {
@@ -255,7 +263,8 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
       liveness.markUnresponsive();
       unresponsive.report();
     },
-    () => {
+    (reply) => {
+      pluginReply = reply;
       liveness.markResponsive();
       unresponsive.clear();
     },
@@ -264,6 +273,20 @@ function startLeader(REQUEST_PORT: number, RESPONSE_PORT: number): Leader {
   const callTool = createCallToolHandler({
     dispatcher,
     isReady: () => socketsConnected() && liveness.isUsable(),
+    checkCompatibility: name => writeTools.has(name) && !isCompatiblePlugin(pluginReply) ? UPDATE_BRIDGE_MESSAGE : undefined,
+    bridgeStatus: () => {
+      const connected = socketsConnected() && liveness.current() === "responsive";
+      const compatible = connected && isCompatiblePlugin(pluginReply);
+      const identity = (pluginReply as { result?: { plugin_version?: unknown; protocol?: unknown } } | undefined)?.result;
+      const pluginVersion = typeof identity?.plugin_version === "string" && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(identity.plugin_version)
+        ? identity.plugin_version : undefined;
+      return {
+        server_version: VERSION, plugin_version: pluginVersion, expected_protocol: BRIDGE_PROTOCOL,
+        request_port: REQUEST_PORT, response_port: RESPONSE_PORT,
+        plugin_protocol: typeof identity?.protocol === "number" ? identity.protocol : undefined,
+        connected, compatible, message: !connected ? NOT_CONNECTED_MESSAGE : compatible ? undefined : UPDATE_BRIDGE_MESSAGE,
+      };
+    },
     notReadyMessage: () => {
       if (socketsConnected()) return unresponsive.current();
       console.error(`[plugin] ${NOT_CONNECTED_DETAILS}`);
@@ -307,6 +330,7 @@ function runInstallPlugin(): void {
       console.error(`Plugin already present at ${result.destination}`);
     } else {
       console.error(`Skipped: ${result.reason ?? "unknown reason"}`);
+      process.exitCode = 1;
       process.exit(1);
     }
   } catch (err) {

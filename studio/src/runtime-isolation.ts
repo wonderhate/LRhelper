@@ -14,6 +14,26 @@ export const modelOnlyOverrides = [
 type ConfiguredServer = {name: string; enabled: boolean};
 type Query = (args: string[])=>Promise<ConfiguredServer[]>;
 
+export async function checkCodex(cli: string, env: Record<string,string>) {
+  let version: string;
+  try {
+    const result = await execute(cli,["--version"],{env,windowsHide:true,timeout:5000,maxBuffer:64*1024});
+    const match = /^codex(?:-cli)?\s+([\d.]+(?:[-+][\w.-]+)?)/i.exec(result.stdout.trim());
+    if (!match) throw new Error("Unrecognized version");
+    version = match[1];
+  } catch {
+    throw new Error("找不到可用的 Codex CLI。请安装 CLI，或在设置中指定 codexPath。");
+  }
+  if (!env.CODEX_API_KEY && !env.OPENAI_API_KEY) {
+    try {
+      await execute(cli,["login","status"],{env,windowsHide:true,timeout:5000,maxBuffer:64*1024});
+    } catch {
+      throw new Error("Codex CLI 尚未登录。请在 PowerShell 中运行 codex login。");
+    }
+  }
+  return { version, proxyConfigured: !!(env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY || env.https_proxy || env.http_proxy || env.all_proxy) };
+}
+
 /** Empty TOML tables merge with inherited config; disable every discovered server explicitly. */
 export async function isolatedMcpOverrides(query: Query): Promise<string[]> {
   const servers = await query(["mcp","list","--json"]);
@@ -33,6 +53,7 @@ export async function isolatedMcpOverrides(query: Query): Promise<string[]> {
 export async function prepareCodexRuntime(): Promise<CodexOptions> {
   const env = await runtimeEnvironment();
   const cli = process.env.STUDIO_CODEX_PATH ?? process.env.CODEX_APP_RUNTIME_CLI_PATH ?? "codex";
+  await checkCodex(cli,env);
   try {
     const overrides = await isolatedMcpOverrides(async args=>{
       const {stdout} = await execute(cli,args,{env,windowsHide:true,timeout:5000,maxBuffer:2*1024*1024});

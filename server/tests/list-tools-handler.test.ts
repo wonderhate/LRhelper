@@ -13,6 +13,7 @@ import {
 } from '../src/tool-contracts.js';
 
 const EXPECTED_TOOL_NAMES = [
+  'get_bridge_status',
   'search_photos',
   'get_selected_photos',
   'get_photo_metadata',
@@ -105,8 +106,8 @@ describe('TOOL_DEFINITIONS', () => {
     }
   });
 
-  it('contains exactly 71 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(71);
+  it('contains exactly 72 tools', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(72);
   });
 
   it('replaces the separate rating and flag tools', () => {
@@ -519,13 +520,6 @@ describe('develop setting schema', () => {
   });
 });
 
-/**
- * Lua DISPATCH entries that exist for e2e setup only: reachable from the raw TCP
- * probe, deliberately absent from TOOL_CONTRACTS so no MCP client can call them.
- */
-const TEST_ONLY_ACTIONS: Record<string, string> = {
-};
-
 describe('local adjustment schema', () => {
   it('matches the slider table the Lua handler validates against', () => {
     const luaPath = path.resolve(process.cwd(), '..', 'plugin', 'LightroomMCP.lrplugin', 'LocalSliders.lua');
@@ -643,21 +637,9 @@ describe('tool contracts vs Lua dispatch', () => {
       TOOL_CONTRACTS.map((contract) => [contract.name, contract.luaHandler]),
     );
 
-    for (const action of Object.keys(TEST_ONLY_ACTIONS)) {
-      delete dispatch[action];
-    }
-
     expect(dispatch).toEqual(manifest);
   });
 
-  it('keeps test-only actions off the MCP tool surface', () => {
-    const dispatch = parseLuaDispatch();
-
-    for (const [action, luaHandler] of Object.entries(TEST_ONLY_ACTIONS)) {
-      expect(dispatch[action]).toBe(luaHandler);
-      expect(TOOL_CONTRACTS.some((contract) => contract.name === action)).toBe(false);
-    }
-  });
 });
 
 
@@ -721,7 +703,7 @@ describe('keyword subtree description', () => {
 describe('Remove spot contracts', () => {
   it('accepts only the proven uppercase Opacity field', () => {
     const schema = TOOL_CONTRACTS.find((tool) => tool.name === 'update_spot')!.inputSchema;
-    const validate = new Ajv().compile(schema);
+    const validate = new Ajv({ allowUnionTypes: true }).compile(schema);
     expect(validate({ photo_id: '1', index: 1, params: { Opacity: 0.6 } })).toBe(true);
     expect(validate({ photo_id: '1', index: 1, params: { opacity: 0.6 } })).toBe(false);
     expect(validate({ photo_id: '1', index: 1, params: { Opacity: 2 } })).toBe(false);

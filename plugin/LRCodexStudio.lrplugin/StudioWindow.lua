@@ -7,6 +7,7 @@ local LrPrefs = import 'LrPrefs'
 local LrTasks = import 'LrTasks'
 local LrView = import 'LrView'
 local Client = require 'StudioClient'
+local version = require('Info').VERSION
 
 local Window = {}
 
@@ -543,6 +544,24 @@ function Window.show()
                     run('capture', { photoId = tostring(target.localIdentifier) })
                 end
 
+                local function showConnection()
+                    LrTasks.startAsyncTask(function()
+                        local ok, result = LrTasks.pcall(function() return Client.request('GET', '/bridge') end)
+                        if closed then return end
+                        local lines = { '工作台插件 ' .. string.format('%d.%d.%d', version.major, version.minor, version.revision) }
+                        if ok then
+                            lines[#lines + 1] = 'Studio Host ' .. (result.studio_version or '未知')
+                            lines[#lines + 1] = 'MCP 服务端 ' .. (result.server_version or '未知')
+                            lines[#lines + 1] = 'Lightroom MCP 插件 ' .. (result.plugin_version or '未报告版本')
+                            lines[#lines + 1] = result.compatible and '插件连接正常，可创建预览副本。'
+                                or (result.message or '尚未确认插件兼容性。')
+                        else
+                            lines[#lines + 1] = tostring(result)
+                        end
+                        LrDialogs.message('连接状态', table.concat(lines, '\n'), 'info')
+                    end)
+                end
+
                 local function exportXmp()
                     if not p.canExportXmp then return end
                     local styleId = p.selectedStyle
@@ -750,6 +769,7 @@ function Window.show()
                         f:push_button { title = '打开', enabled = bind 'canOpenConversation', action = function() local conversation = conversationsById[p.conversationChoice]; if conversation then openJob(conversation.headJobId) end end },
                         f:push_button { title = '刷新', enabled = bind 'idle', action = refreshWorkspace },
                         f:push_button { title = '新会话', enabled = bind 'idle', action = newConversation },
+                        f:push_button { title = '连接状态', action = showConnection },
                     },
                 }
 

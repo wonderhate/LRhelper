@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { requestPort, responsePort } from '../src/ports.js';
+import { bridgePorts, requestPort, responsePort } from '../src/ports.js';
 
 describe('ports', () => {
   const originalReq = process.env.LIGHTROOM_MCP_REQUEST_PORT;
@@ -23,6 +23,11 @@ describe('ports', () => {
 
   it('returns default response port when env unset', () => {
     expect(responsePort()).toBe(58764);
+  });
+
+  it('rejects the same request and response port before connecting', () => {
+    process.env.LIGHTROOM_MCP_REQUEST_PORT = '58764';
+    expect(bridgePorts).toThrow(/must be different/);
   });
 
   it('treats empty env value as unset', () => {

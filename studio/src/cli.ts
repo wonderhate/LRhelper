@@ -10,10 +10,12 @@ import { WorkbenchServer } from "./workbench-server.js";
 import type { Mode } from "./types.js";
 import { loadConfiguration } from "./configuration.js";
 import { VERSION } from "./version.js";
+import { preflight } from "./preflight.js";
 
 const HELP=`LR Codex Studio ${VERSION} — 调色、风格与局部蒙版
 
-  doctor                         检查当前 MCP、选中照片、源文件和真实预览（只读）
+  doctor                         检查选中照片并在本机保存诊断预览
+  doctor --preflight             检查 Node、Codex 登录和 Lightroom 桥接
   config                         显示生效的配置与数据目录
   serve                          启动 Lightroom 原生工作台的本地 Host
   plan --mode describe --prompt "柔和高光，保留自然肤色"
@@ -40,7 +42,7 @@ settings.json 或 STUDIO_CODEX_PATH / STUDIO_CODEX_MODEL / STUDIO_DATA_DIR / STU
 `;
 
 async function main() {
-  const {values,positionals}=parseArgs({allowPositionals:true,options:{help:{type:"boolean",short:"h"},version:{type:"boolean"},mode:{type:"string"},prompt:{type:"string"},reference:{type:"string"},photo:{type:"string"},strength:{type:"string"},name:{type:"string"},output:{type:"string"},"local-masks":{type:"boolean"}}});
+  const {values,positionals}=parseArgs({allowPositionals:true,options:{help:{type:"boolean",short:"h"},version:{type:"boolean"},mode:{type:"string"},prompt:{type:"string"},reference:{type:"string"},photo:{type:"string"},strength:{type:"string"},name:{type:"string"},output:{type:"string"},preflight:{type:"boolean"},"local-masks":{type:"boolean"}}});
   const command=positionals[0];
   if(values.version) { console.log(VERSION);return; }
   if(values.help || !command) { console.log(HELP);return; }
@@ -51,6 +53,12 @@ async function main() {
   process.env.STUDIO_CODEX_PATH=config.codexPath;
   if(config.model!==undefined) process.env.STUDIO_CODEX_MODEL=config.model;
   process.env.STUDIO_USE_SYSTEM_PROXY=config.useSystemProxy ? "1" : "0";
+  if(command==="doctor" && values.preflight) {
+    const result=await preflight(config);
+    console.log(JSON.stringify(result,null,2));
+    if(!result.ok) process.exitCode=1;
+    return;
+  }
   const store=new JobStore(config.jobsDirectory);
   if(command==="show") { console.log(JSON.stringify(await store.load(positionals[1]),null,2));return; }
   if(["preview","restore","reconcile"].includes(command)) store.dir(positionals[1]);

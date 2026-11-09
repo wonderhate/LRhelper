@@ -38,6 +38,10 @@
   },
   "tools": [
     {
+      "name": "get_bridge_status",
+      "description": "Read the loaded Lightroom plugin version and protocol compatibility."
+    },
+    {
       "name": "search_photos",
       "description": "Search the catalog by filename, keywords, rating, or date."
     },

@@ -84,6 +84,7 @@ export interface ModelRuntime {
   generate(input: { request: GradeRequest; photo: Photo; baseline: Settings; keys: string[]; targetImage: string; referenceImage?: string; history?: ConversationTurn[]; maskCapabilities?: MaskCapabilities; previousMasks?: MaskPlan[]; signal?: AbortSignal }): Promise<{ plan: unknown; threadId?: string }>;
 }
 export interface Lightroom {
+  bridgeStatus?(): Promise<Record<string,unknown>>;
   discover(signal?: AbortSignal): Promise<string[]>;
   discoverMasks?(signal?: AbortSignal): Promise<MaskCapabilities>;
   selected(signal?: AbortSignal): Promise<{ id: string | number }[]>;

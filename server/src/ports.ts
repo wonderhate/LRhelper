@@ -29,3 +29,9 @@ export function responsePort(): number {
     "LIGHTROOM_MCP_RESPONSE_PORT",
   );
 }
+
+export function bridgePorts(): { request: number; response: number } {
+  const request = requestPort(), response = responsePort();
+  if (request === response) throw new Error("LIGHTROOM_MCP_REQUEST_PORT and LIGHTROOM_MCP_RESPONSE_PORT must be different.");
+  return { request, response };
+}

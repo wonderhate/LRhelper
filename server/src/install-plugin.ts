@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { UPDATE_BRIDGE_MESSAGE } from "./bridge-identity.js";
 
 export interface InstallResult {
   status: "installed" | "already-present" | "skipped";
@@ -44,18 +45,29 @@ export function lightroomPluginsDir(): string {
   return path.join(os.homedir(), ".local", "share", "Adobe", "Lightroom", "Plugins");
 }
 
-export function isPluginInstalledAnywhere(): boolean {
-  const targets = [
-    path.join(lightroomModulesDir(), "LightroomMCP.lrplugin", "Info.lua"),
-    path.join(lightroomPluginsDir(), "LightroomMCP.lrplugin", "Info.lua"),
-  ];
-  return targets.some((p) => {
+function installedPlugins(): string[] {
+  return [lightroomModulesDir(), lightroomPluginsDir()].map(dir => path.join(dir, "LightroomMCP.lrplugin")).filter(dir => {
     try {
-      return fs.statSync(p).isFile();
+      return fs.statSync(path.join(dir, "Info.lua")).isFile();
     } catch {
       return false;
     }
   });
+}
+
+export function isPluginInstalledAnywhere(): boolean {
+  return installedPlugins().length > 0;
+}
+
+function matchesBundledIdentity(source: string, destination: string): boolean {
+  const identity = path.join(source, "BridgeIdentity.lua");
+  if (!fs.existsSync(identity)) return true; // Legacy custom bundles have no identity file.
+  try {
+    const read = (directory: string, file: string) => fs.readFileSync(path.join(directory, file), "utf8").replaceAll("\r\n", "\n");
+    return ["BridgeIdentity.lua", "Info.lua"].every(file => read(source, file) === read(destination, file));
+  } catch {
+    return false;
+  }
 }
 
 export function findBundledPlugin(startDir: string): string | null {
@@ -121,6 +133,9 @@ export function installPlugin(opts: {
   }
 
   if (!opts.force && fs.existsSync(destination)) {
+    if (!matchesBundledIdentity(opts.source, destination)) {
+      return { status: "skipped", destination, reason: UPDATE_BRIDGE_MESSAGE };
+    }
     return { status: "already-present", destination };
   }
 
@@ -133,9 +148,13 @@ export function installPlugin(opts: {
 }
 
 export function ensurePluginInstalled(startDir: string, log: (msg: string) => void): void {
-  if (isPluginInstalledAnywhere()) return;
   const source = findBundledPlugin(startDir) ?? findPluginBesideBinary();
   if (!source) return;
+  const existing = installedPlugins();
+  if (existing.length) {
+    if (!existing.some(directory => matchesBundledIdentity(source, directory))) log(UPDATE_BRIDGE_MESSAGE);
+    return;
+  }
   try {
     const result = installPlugin({ source });
     if (result.status === "installed") {

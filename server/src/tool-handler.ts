@@ -10,6 +10,8 @@ export interface ToolHandlerDeps {
   isReady: () => boolean;
   notReadyMessage?: () => string;
   settleReadiness?: () => Promise<void>;
+  checkCompatibility?: (name: string) => string | undefined;
+  bridgeStatus?: () => unknown;
 }
 
 interface TextBlock {
@@ -95,9 +97,12 @@ export function createCallToolHandler(deps: ToolHandlerDeps) {
     await deps.settleReadiness?.();
     if (options?.signal?.aborted) return bridgeErrorResponse("cancelled", "Request cancelled before sending");
 
+    if (name === "get_bridge_status" && deps.bridgeStatus) return { content: successContent(deps.bridgeStatus()) };
     if (!deps.isReady()) {
       return bridgeErrorResponse("not_sent", deps.notReadyMessage?.() ?? NOT_CONNECTED_MESSAGE);
     }
+    const incompatibility = deps.checkCompatibility?.(name);
+    if (incompatibility) return bridgeErrorResponse("not_sent", incompatibility);
 
     try {
       if (name === "get_photo_preview") {

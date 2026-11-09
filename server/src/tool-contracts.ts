@@ -534,6 +534,15 @@ const searchFilterProperties = {
 
 export const TOOL_CONTRACTS: ToolContract[] = [
   {
+    name: "get_bridge_status",
+    toolset: "core",
+    title: "Bridge status",
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    description: "Read loaded plugin version and compatibility.",
+    luaHandler: "BridgeIdentity.describe",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
     name: "search_photos",
     toolset: "core",
     alwaysLoad: true,
@@ -541,7 +550,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
     luaHandler: "HandlerSearch.searchPhotos",
     description:
-      "Search photos using intersecting Library filters (paginated, default limit 100): filename, keywords, rating, capture date, camera, lens, ISO, focal length, flag, color label, edited status, file type and folder. Provide at least one filter to improve performance on large catalogs.",
+      "Search with intersecting Library filters. Use a filter for large catalogs. Default page: 100 photos.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -577,7 +586,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
     luaHandler: "HandlerStyleSummary.summarize",
     description:
-      "Summarize numeric Develop settings by camera model and ISO (1-400, 401-1600, 1601-6400, 6401+, unknown). Select rating >= min_rating (default 4; 0=all); exported_only requires raw isExported true. Reads at most max_photos settings (default/max 200); export filtering batches flags for all rating matches. Returns count and SDK-key median/min/max per group, scanned/matched/truncated. Excludes crop, perspective, Temperature/Tint, nonfinite/nonnumeric/all-zero settings. Alphabetical keys fill 6000 characters/group; settings_omitted counts size exclusions. Read-only.",
+      "Read numeric Develop medians, ranges and counts by camera and ISO band. Excludes crop, perspective, Temperature/Tint and all-zero settings. Scanned/matched/truncated and settings_omitted describe coverage.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

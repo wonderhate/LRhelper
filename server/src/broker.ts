@@ -17,6 +17,7 @@ import path from "node:path";
 import { LineBuffer, MAX_FRAME_BYTES } from "./line-buffer.js";
 import type { CallOptions, ToolProgress } from "./dispatcher.js";
 import { bridgeErrorResponse, type ToolResponse } from "./tool-handler.js";
+import { BRIDGE_PROTOCOL } from "./bridge-identity.js";
 
 export type ToolCaller = (name: string, args: unknown, options?: CallOptions) => Promise<ToolResponse>;
 
@@ -172,7 +173,7 @@ export class BrokerServer {
       return false;
     }
     const proof = signNonce(this.opts.readToken(), `owner:${challenge}`);
-    sock.write(JSON.stringify({ nonce, proof }) + "\n");
+    sock.write(JSON.stringify({ nonce, proof, bridgeProtocol: BRIDGE_PROTOCOL }) + "\n");
     return true;
   }
 
@@ -185,7 +186,7 @@ export class BrokerServer {
     }
     const req = parseRequest(line);
     if (!req) {
-      this.log(`[broker] malformed request from follower: ${line.slice(0, 200)}`);
+      this.log(`[broker] malformed request from follower (${Buffer.byteLength(line)} bytes)`);
       return;
     }
     if (!authMatches(signNonce(this.opts.readToken(), `follower:${nonce}`), req.auth)) {
@@ -295,6 +296,7 @@ export interface BrokerClientOptions {
 export class BrokerClient {
   private sock: net.Socket | null = null;
   private nonce = "";
+  private ownerProtocol?: number;
   private nextId = 0;
   private readonly pending = new Map<number, { resolve: (resp: ToolResponse) => void; options?: CallOptions; cleanup: () => void }>();
 
@@ -329,6 +331,7 @@ export class BrokerClient {
         throw new Error("owning bridge could not prove it holds the plugin token");
       }
       this.nonce = greeting.nonce as string;
+      this.ownerProtocol = typeof greeting.bridgeProtocol === "number" ? greeting.bridgeProtocol : undefined;
     } catch (err) {
       sock.destroy();
       throw err;
@@ -368,6 +371,10 @@ export class BrokerClient {
 
   isConnected(): boolean {
     return this.sock !== null;
+  }
+
+  hasCompatibleOwner(): boolean {
+    return this.ownerProtocol === BRIDGE_PROTOCOL;
   }
 
   callTool(name: string, args: unknown, options?: CallOptions): Promise<ToolResponse> {

@@ -617,9 +617,13 @@ describe("heartbeat / stale-connection blast radius (PR #151 review)", function(
         installStubs()
     end)
 
-    it("ping handler is a pure liveness no-op returning pong=true", function()
+    it("ping returns the loaded bridge identity without touching photos", function()
         local mod = loadInfoProvider()
-        assert.are.same({ pong = true }, mod.handlePing({}))
+        local reply = mod.handlePing({})
+        assert.is_true(reply.pong)
+        assert.are.equal("wonderhate/LRhelper", reply.product)
+        assert.are.equal(1, reply.protocol)
+        assert.are.equal(64, #reply.capability_hash)
     end)
 
     it("derives the soft/hard thresholds from the heartbeat interval", function()

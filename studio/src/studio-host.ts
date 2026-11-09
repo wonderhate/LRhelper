@@ -20,6 +20,10 @@ export class StudioHost {
     this.styles=new StyleLibrary(path.join(path.dirname(store.root),"styles"));
     this.batches = new BatchQueue(this);
   }
+  async bridgeStatus() {
+    if(!this.lr.bridgeStatus) throw new Error("当前桥接不提供版本状态。");
+    return this.lr.bridgeStatus();
+  }
   async capture(request: GradeRequest, photoId?: string|number, jobId?: string, signal?: AbortSignal): Promise<Job> {
     return this.captureJob(request,photoId,jobId,signal);
   }

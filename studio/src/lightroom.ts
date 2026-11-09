@@ -23,7 +23,7 @@ function unknownCode(code: unknown, message: string): LightroomUnknownCode | und
 
 export class LightroomClient implements Lightroom {
   private client = new Client({name:"lr-codex-studio",version:VERSION});
-  constructor(private readonly serverEntry: string) {}
+  constructor(private readonly serverEntry: string, private readonly checkOnly = false) {}
   async connect() {
     const env: Record<string, string> = {};
     // The SDK supplies the system environment. Only forward bridge settings and temp locations.
@@ -31,9 +31,11 @@ export class LightroomClient implements Lightroom {
       const value = process.env[key];
       if (value !== undefined) env[key] = value;
     }
-    await this.client.connect(new StdioClientTransport({command:process.execPath,args:[this.serverEntry],env:{...env,LIGHTROOM_MCP_TOOLSETS:"all",LIGHTROOM_MCP_READ_ONLY:"false"},maxBufferSize:16*1024*1024}));
+    if (this.checkOnly) env.LIGHTROOM_MCP_SKIP_AUTO_INSTALL = "1";
+    await this.client.connect(new StdioClientTransport({command:process.execPath,args:[this.serverEntry],env:{...env,LIGHTROOM_MCP_TOOLSETS:"all",LIGHTROOM_MCP_READ_ONLY:this.checkOnly ? "true" : "false"},maxBufferSize:16*1024*1024}));
   }
   async close() { await this.client.close(); }
+  async bridgeStatus() { return this.call("get_bridge_status",{}); }
   private async tools(signal?: AbortSignal) {
     let cursor: string | undefined;
     const tools = [];

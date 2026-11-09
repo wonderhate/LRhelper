@@ -169,6 +169,7 @@ export class WorkbenchServer {
     if (req.headers.host !== new URL(this.url).host) {this.send(res,403,{error:"Invalid host"});return;}
     try {
       if (req.method === "GET" && req.url === "/health") {this.send(res,200,{ok:true,version:VERSION,busy:!!this.active,root:this.root});return;}
+      if (req.method === "GET" && req.url === "/bridge") {this.send(res,200,{studio_version:VERSION,...await this.host.bridgeStatus()});return;}
       if (req.method === "GET" && req.url === "/workspace") {
         const [conversations,styles,batches]=await Promise.all([this.host.conversations(),this.host.styles.list(),this.host.batches.list()]);
         this.send(res,200,{conversations,styles,batches});return;

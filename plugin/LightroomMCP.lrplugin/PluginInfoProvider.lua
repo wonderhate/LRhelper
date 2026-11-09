@@ -28,6 +28,7 @@ local HandlerPreview = require 'HandlerPreview'
 local HandlerDevelop = require 'HandlerDevelop'
 local HandlerSnapshots = require 'HandlerSnapshots'
 local HandlerVirtualCopies = require 'HandlerVirtualCopies'
+local BridgeIdentity = require 'BridgeIdentity'
 local HandlerMasks = require 'HandlerMasks'
 local HandlerSpots = require 'HandlerSpots'
 local HandlerGradientMasks = require 'HandlerGradientMasks'
@@ -206,7 +207,8 @@ local DISPATCH = {
     -- auth + dispatch path as any other action, so consumeMessage's
     -- lastRequestTime update (below) already treats it as liveness — no
     -- separate heartbeat bookkeeping needed. See STALE_RECONNECT_SECONDS.
-    ping = function(_params) return { pong = true } end,
+    ping = function() return BridgeIdentity.describe() end,
+    get_bridge_status = BridgeIdentity.describe,
     search_photos = HandlerSearch.searchPhotos,
     list_folders = HandlerFolders.listFolders,
     get_folder_photos = HandlerFolders.getFolderPhotos,
@@ -378,7 +380,7 @@ local function dispatchAction(request)
     -- connection is healthy; skip them here so they don't dominate the
     -- 100-line ring buffer used by the status panel and drown out real
     -- request activity.
-    local isHeartbeat = (action == "ping")
+    local isHeartbeat = (action == "ping" or action == "get_bridge_status")
     -- Tracked so the stale-connection monitor can defer a restart while a
     -- real request is in flight. Held through sendResponse (not just the
     -- handler call) so the monitor can't yank the socket while a response

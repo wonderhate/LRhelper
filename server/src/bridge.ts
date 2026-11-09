@@ -2,6 +2,7 @@ import { BrokerClient, BrokerServer, type ToolCaller } from "./broker.js";
 import { LockHeldError, type InstanceLock } from "./instance-lock.js";
 import type { CallOptions } from "./dispatcher.js";
 import { bridgeErrorResponse, type ToolResponse } from "./tool-handler.js";
+import { UPDATE_OWNER_MESSAGE } from "./bridge-identity.js";
 
 export interface Leader {
   callTool: ToolCaller;
@@ -18,6 +19,7 @@ export interface BridgeOptions {
   /** The pid the lock names now; a follower whose owner lost the lock re-elects. */
   lockHolder?: () => number | null;
   holderCheckMs?: number;
+  needsCompatibleOwner?: (name: string) => boolean;
   retryMs?: number;
   readyWaitMs?: number;
   log?: (msg: string) => void;
@@ -86,6 +88,9 @@ export class Bridge {
       case "leader":
         return this.state.leader.callTool(name, args, options);
       case "follower":
+        if (this.opts.needsCompatibleOwner?.(name) && !this.state.client.hasCompatibleOwner()) {
+          return bridgeErrorResponse("not_sent", UPDATE_OWNER_MESSAGE);
+        }
         return this.state.client.callTool(name, args, options);
       case "none":
         return this.noOwnerResponse();

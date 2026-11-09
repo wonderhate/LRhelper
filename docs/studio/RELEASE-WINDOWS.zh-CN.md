@@ -5,7 +5,7 @@
 ## 安装
 
 1. 解压 ZIP，在解压目录运行 `./Install.ps1`。默认装到 `%LOCALAPPDATA%\LR Codex Studio`，也可以传入 `-InstallRoot` 指定路径。
-2. 在 Lightroom「文件 → 增效工具管理器 → 添加」中选择安装目录下的 `current\plugin\LRCodexStudio.lrplugin`。已有工作区开发版时，请先停用该条目，再添加安装版。复用已运行的 Lightroom MCP 插件。首次安装 Lightroom MCP 时，可在同一管理器添加 `current\plugin\LightroomMCP.lrplugin` 并启动其服务。
+2. 在 Lightroom「文件 → 增效工具管理器 → 添加」中，从安装目录的 `current\plugin` 添加 `LRCodexStudio.lrplugin` 与 `LightroomMCP.lrplugin`。已有同名开发版、上游版或其他版本时，先停用旧条目，再添加本安装包的版本并重启 Lightroom。新版桥接会核对实际加载的版本，确认兼容后才允许写入。
 3. 运行安装目录下的 `current\scripts\start-studio-host.ps1`。在 Lightroom 的「增效工具额外信息」打开 LR Codex Studio 工作台。
 
 ## 配置和诊断
