@@ -186,6 +186,26 @@ test('damaged journals do not hide valid records or let history resolve outside 
   await assert.rejects(f.store.load(jobId), /任务记录无效/);
 });
 
+test('storage exports owned images, archives only local records and restores the same IDs', async t => {
+  const f=await batchFixture(t);
+  const batch=await f.host.batches.plan(f.style.id,['1','2'],undefined,new AbortController().signal,()=>{});
+  const jobId=batch.items[0].jobId;
+  await assert.rejects(f.host.storage.run({action:'trash',kind:'conversation',id:jobId}),/仍在批次中/);
+  const backup=await f.host.storage.run({action:'export',kind:'style',id:f.style.id,output:f.dir});
+  assert.deepEqual(await readFile(path.join(backup.path,'styles',f.style.id,'reference.jpg')),await readFile(f.ref));
+  await assert.rejects(f.host.storage.run({action:'export',kind:'style',id:f.style.id,output:f.dir}),{code:'EEXIST'});
+  const trashed=await f.host.storage.run({action:'trash',kind:'style',id:f.style.id});
+  assert.equal(trashed.records,1);assert.equal(trashed.images,1);
+  assert.deepEqual(await f.host.styles.list(),[]);
+  const summary=await f.host.storage.summary();
+  assert.equal(summary.trash.records,1);assert.equal(summary.archives[0].id,trashed.archiveId);
+  assert.deepEqual(await f.host.storage.run({action:'purge',days:30}),{removed:0});
+  await f.host.storage.run({action:'restore',id:trashed.archiveId});
+  assert.equal((await f.host.styles.load(f.style.id)).id,f.style.id);
+  assert.equal((await f.host.storage.summary()).trash.records,0);
+  assert.equal(f.writes.length,0);
+});
+
 test('refinement uses the actual prior render and retains unmentioned settings in a new copy',async t=>{
   const f=await fixture(t),first=await f.host.preview(f.job.id);
   f.model.next=proposal('Saturation',-10);

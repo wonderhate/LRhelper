@@ -17,15 +17,16 @@ python studio/tests/lua-workbench.py
 
 ```powershell
 ./scripts/build-studio-release.ps1
-powershell.exe -NoProfile -File studio/tests/windows-release-smoke.ps1 -Package build/studio/LR-Codex-Studio-1.0.0-Windows-x64.zip
+./scripts/test-studio-release.ps1
 ```
 
 实际显影测试使用练习照片和新虚拟副本。保留快照，读回源照片和副本，再判断是否恢复成功。功能与安全性相关的回归应覆盖旧任务记录和现有 Lightroom MCP 能力。
 
 ## 发布维护
 
-将测试过的 Windows x64 ZIP 和同名 `.sha256` 文件附到对应的 GitHub Release，使用 `vX.Y.Z` 标签。发布事件触发 **Publish Windows Package**，它校验 Release 的 SHA-256，发布同样的文件到 GHCR，再拉取并复验。需要重试时，从 Actions 手动运行同一工作流并指定标签。
-# 维护桥接分支
+将标签构建生成的 Windows x64 ZIP 和同名 `.sha256` 文件附到对应的 GitHub Release。发布事件触发 **Publish Windows Package**，它验证 SHA-256 与构建证明，发布相同文件到 GHCR，再按不可变引用拉取复验。需要重试时，从 Actions 手动运行同一工作流并指定标签。
+
+## 维护桥接分支
 
 Lightroom MCP 桥接以 Automaat/lightroom-mcp 0.26.0 为基线。同步上游时保留原许可和历史，在单独分支合入并复验下面的本地改动。
 

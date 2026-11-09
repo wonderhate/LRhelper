@@ -69,6 +69,12 @@ function Window.show()
                 p.batchChoice, p.batchPhotoChoice = '', ''
                 p.batchMessage = '在 Lightroom 中选择 2–8 张照片，然后生成批次方案。'
                 p.batchDetail = '生成后可逐张查看方案。预览会为每张照片创建独立副本。'
+                p.storageKind, p.storageId, p.archiveId = 'conversation', '', ''
+                p.storageItems = p.conversationItems
+                p.archiveItems = { { title = '回收站为空', value = '' } }
+                p.storageDays = '30'
+                p.storageSummary = '点击“查看容量”读取本地空间占用。'
+                p.storageMessage = '可导出记录和图片，或移到回收站。Lightroom 中的照片和副本不受影响。'
 
                 local function hasChanges(job)
                     return job and ((job.diff and job.diff ~= '') or job.hasMaskChanges == true)
@@ -85,6 +91,8 @@ function Window.show()
                     p.previewGuide = p.canPreview and '点击「预览副本」查看调色效果。' or '这里显示 Lightroom 渲染的虚拟副本。'
                     p.canRestore = p.idle and currentJob ~= nil and currentJob.canRestore == true
                     p.canReconcile = p.idle and currentJob ~= nil and currentJob.canReconcile == true
+                    p.canManageStorage = p.idle and p.storageId ~= ''
+                    p.canRestoreArchive = p.idle and p.archiveId ~= ''
                     p.canRefine = p.idle and currentJob ~= nil and currentJob.canRefine == true
                     p.canSubmitRefine = p.canRefine and p.feedback:find('%S') ~= nil
                     p.canSaveStyle = p.canRefine
@@ -585,6 +593,88 @@ function Window.show()
                     end)
                 end
 
+                local storageLabels = { conversation = '会话', style = '风格', batch = '批次' }
+                local function storageOptions()
+                    local items = { conversation = p.conversationItems, style = p.styleItems, batch = p.batchItems }
+                    p.storageItems = items[p.storageKind]
+                    for _, item in ipairs(p.storageItems) do
+                        if item.value == p.storageId then buttons(); return end
+                    end
+                    p.storageId = p.storageItems[1] and p.storageItems[1].value or ''
+                    buttons()
+                end
+                p:addObserver('storageKind', storageOptions)
+                p:addObserver('storageId', buttons)
+                p:addObserver('archiveId', buttons)
+                p:addObserver('conversationItems', storageOptions)
+                p:addObserver('styleItems', storageOptions)
+                p:addObserver('batchItems', storageOptions)
+
+                local function fileSize(bytes)
+                    return bytes >= 1048576 and string.format('%.1f MB', bytes / 1048576)
+                        or string.format('%.1f KB', bytes / 1024)
+                end
+                local function updateStorage()
+                    local summary = Client.request('GET', '/storage')
+                    p.storageSummary = '任务 ' .. fileSize(summary.jobs.bytes) .. '  ·  风格 ' .. fileSize(summary.styles.bytes)
+                        .. '  ·  批次 ' .. fileSize(summary.batches.bytes) .. '  ·  回收站 ' .. fileSize(summary.trash.bytes)
+                    local items = { { title = '选择待恢复记录…', value = '' } }
+                    for _, archive in ipairs(summary.archives) do
+                        items[#items + 1] = { title = storageLabels[archive.kind] .. ' · ' .. string.sub(archive.createdAt, 1, 10)
+                            .. ' · ' .. string.sub(archive.sourceId, 1, 8), value = archive.id }
+                    end
+                    p.archiveItems = #items > 1 and items or { { title = '回收站为空', value = '' } }
+                    p.archiveId = ''
+                end
+                local function storageAction(action)
+                    if not p.idle then return end
+                    local kind, id = p.storageKind, p.storageId
+                    local request = { action = action, kind = kind, id = id }
+                    if action == 'restore' then request.id = p.archiveId end
+                    p.loading = true; buttons()
+                    LrTasks.startAsyncTask(function()
+                        local ok, result = LrTasks.pcall(function()
+                            if action == 'summary' then updateStorage(); return end
+                            if action == 'export' then
+                                local folders = LrDialogs.runOpenPanel { title = '选择备份保存位置', canChooseFiles = false,
+                                    canChooseDirectories = true, allowsMultipleSelection = false }
+                                if not folders or not folders[1] then return end
+                                request.output = folders[1]
+                            elseif action == 'trash' then
+                                local selected = Client.request('POST', '/storage', { action = 'inspect', kind = kind, id = id })
+                                local detail = string.format('%d 条记录、%d 张参考图或预览图，共 %s。可从回收站恢复。', selected.records, selected.images, fileSize(selected.bytes))
+                                if LrDialogs.confirm('将' .. storageLabels[kind] .. '移到回收站？', detail, '移到回收站', '取消') ~= 'ok' then return end
+                            elseif action == 'purge' then
+                                request.days = tonumber(p.storageDays)
+                                if not request.days or request.days < 1 or request.days > 3650 or request.days % 1 ~= 0 then
+                                    error('请输入 1–3650 之间的保留天数。', 0)
+                                end
+                                if LrDialogs.confirm('清理回收站？', '永久清除超过 ' .. request.days .. ' 天的已归档记录。', '清理', '取消') ~= 'ok' then return end
+                            end
+                            if closed then return end
+                            return Client.request('POST', '/storage', request)
+                        end)
+                        p.loading = false; buttons()
+                        if closed then return end
+                        if not ok then p.storageMessage = tostring(result); return end
+                        if not result then return end
+                        if action == 'export' then p.storageMessage = '本地备份已保存：' .. result.path
+                        elseif action == 'purge' then p.storageMessage = '已清理 ' .. result.removed .. ' 条回收站记录。'
+                        elseif action == 'restore' then p.storageMessage = '已恢复 ' .. result.records .. ' 条记录。'
+                        else
+                            if kind == 'conversation' and currentJob and (currentJob.conversationId or currentJob.id) == id then newConversation() end
+                            if kind == 'batch' and currentBatch and currentBatch.id == id then
+                                currentBatch, batchRows, prefs.lastBatchId = nil, {}, nil
+                            end
+                            p.storageMessage = '已移到回收站。'
+                        end
+                        if action ~= 'export' then
+                            refreshWorkspace()
+                            LrTasks.pcall(updateStorage)
+                        end
+                    end)
+                end
+
                 local function inputsChanged()
                     if applyingJob then return end
                     prefs.mode, prefs.prompt, prefs.reference, prefs.strength = p.mode, p.prompt, p.reference, p.strength
@@ -759,6 +849,29 @@ function Window.show()
                                 },
                                 f:static_text { title = bind 'batchMessage', width = 658, height_in_lines = 2 },
                                 f:static_text { title = bind 'batchDetail', width = 658, height_in_lines = 2 },
+                            },
+                        },
+                        f:tab_view_item { title = '存储', identifier = 'storage',
+                            f:column { spacing = 8,
+                                f:row { spacing = 8,
+                                    f:push_button { title = '查看容量', enabled = bind 'idle', action = function() storageAction('summary') end },
+                                    f:static_text { title = bind 'storageSummary', width = 500 },
+                                },
+                                f:row { spacing = 8,
+                                    f:popup_menu { value = bind 'storageKind', enabled = bind 'idle', width = 82,
+                                        items = { { title = '会话', value = 'conversation' }, { title = '风格', value = 'style' }, { title = '批次', value = 'batch' } } },
+                                    f:popup_menu { value = bind 'storageId', items = bind 'storageItems', width = 290, enabled = bind 'idle' },
+                                    f:push_button { title = '导出备份', enabled = bind 'canManageStorage', action = function() storageAction('export') end },
+                                    f:push_button { title = '移到回收站', enabled = bind 'canManageStorage', action = function() storageAction('trash') end },
+                                },
+                                f:row { spacing = 8,
+                                    f:popup_menu { value = bind 'archiveId', items = bind 'archiveItems', width = 245, enabled = bind 'idle' },
+                                    f:push_button { title = '恢复记录', enabled = bind 'canRestoreArchive', action = function() storageAction('restore') end },
+                                    f:static_text { title = '保留天数' },
+                                    f:edit_field { value = bind 'storageDays', width = 42, enabled = bind 'idle' },
+                                    f:push_button { title = '清理到期记录', enabled = bind 'idle', action = function() storageAction('purge') end },
+                                },
+                                f:static_text { title = bind 'storageMessage', width = 658, height_in_lines = 2 },
                             },
                         },
                     },

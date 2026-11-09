@@ -8,6 +8,7 @@ import { mapPlan } from "./grading/mapper.js";
 import { checkMask, limitSkinHsl, mapMasks, maskSliderNames } from "./grading/masks.js";
 import { StyleLibrary } from "./style-library.js";
 import { BatchQueue } from "./batch-queue.js";
+import { WorkspaceStorage } from "./workspace-storage.js";
 import { LightroomOutcomeUnknown } from "./lightroom.js";
 import { imageLimit, localFilePath, readBoundedFile, readLocalFile } from "./local-files.js";
 import type { GradeRequest, Job, Lightroom, MaskPlan, MaskSummary, ModelRuntime, Photo, Settings } from "./types.js";
@@ -16,9 +17,11 @@ import type { GradeRequest, Job, Lightroom, MaskPlan, MaskSummary, ModelRuntime,
 export class StudioHost {
   readonly styles: StyleLibrary;
   readonly batches: BatchQueue;
+  readonly storage: WorkspaceStorage;
   constructor(private readonly lr: Lightroom, private readonly model: ModelRuntime, readonly store: JobStore, private readonly settleMs=3500) {
     this.styles=new StyleLibrary(path.join(path.dirname(store.root),"styles"));
     this.batches = new BatchQueue(this);
+    this.storage = new WorkspaceStorage(store,this.styles,this.batches);
   }
   async bridgeStatus() {
     if(!this.lr.bridgeStatus) throw new Error("当前桥接不提供版本状态。");

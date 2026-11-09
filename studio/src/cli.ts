@@ -34,6 +34,11 @@ const HELP=`LR Codex Studio ${VERSION} — 调色、风格与局部蒙版
   export-xmp STYLE_ID --output "C:/Presets/my-style.xmp"
   batches                        列出批次记录
   batch-show BATCH_ID            查看批次中的方案、预览和恢复状态
+  storage                        查看本地任务、风格、批次与回收站容量
+  storage export KIND ID --output DIR    导出本地副本
+  storage trash KIND ID          移到回收站（先用 storage inspect KIND ID 查看内容）
+  storage restore ARCHIVE_ID     恢复回收站记录
+  storage purge --days 30         清除超过保留天数的回收站记录
 
 plan 只读取照片并调用 Codex。preview 是显式执行动作，始终只改新建虚拟副本。
 plan、refine、apply-style 可加 --local-masks，启用主体/天空方案和肤色保护。
@@ -42,11 +47,11 @@ settings.json 或 STUDIO_CODEX_PATH / STUDIO_CODEX_MODEL / STUDIO_DATA_DIR / STU
 `;
 
 async function main() {
-  const {values,positionals}=parseArgs({allowPositionals:true,options:{help:{type:"boolean",short:"h"},version:{type:"boolean"},mode:{type:"string"},prompt:{type:"string"},reference:{type:"string"},photo:{type:"string"},strength:{type:"string"},name:{type:"string"},output:{type:"string"},preflight:{type:"boolean"},"local-masks":{type:"boolean"}}});
+  const {values,positionals}=parseArgs({allowPositionals:true,options:{help:{type:"boolean",short:"h"},version:{type:"boolean"},mode:{type:"string"},prompt:{type:"string"},reference:{type:"string"},photo:{type:"string"},strength:{type:"string"},name:{type:"string"},output:{type:"string"},days:{type:"string"},preflight:{type:"boolean"},"local-masks":{type:"boolean"}}});
   const command=positionals[0];
   if(values.version) { console.log(VERSION);return; }
   if(values.help || !command) { console.log(HELP);return; }
-  if(!["config","doctor","plan","show","preview","restore","reconcile","serve","refine","conversations","history","styles","save-style","apply-style","export-xmp","batches","batch-show"].includes(command)) throw new Error(`Unknown command: ${command}`);
+  if(!["config","doctor","plan","show","preview","restore","reconcile","serve","refine","conversations","history","styles","save-style","apply-style","export-xmp","batches","batch-show","storage"].includes(command)) throw new Error(`Unknown command: ${command}`);
   const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"../..");
   const config=await loadConfiguration(root,process.env);
   if(command==="config") { console.log(JSON.stringify(config,null,2));return; }
@@ -64,6 +69,12 @@ async function main() {
   if(["preview","restore","reconcile"].includes(command)) store.dir(positionals[1]);
   const client=new LightroomClient(config.mcpEntry);
   const host=new StudioHost(client,new CodexRuntime(),store);
+  if(command==="storage") {
+    const [,action,kind,id]=positionals;
+    const result=action ? await host.storage.run({action,kind,id:action==="restore" ? kind : id,output:values.output ? path.resolve(values.output) : undefined,days:Number(values.days)}) : await host.storage.summary();
+    console.log(JSON.stringify(result,null,2));
+    return;
+  }
   if (command === "batches" || command === "batch-show") {
     const batch = command === "batches" ? await host.batches.list() : await host.batches.show(positionals[1]);
     console.log(JSON.stringify(batch, null, 2));

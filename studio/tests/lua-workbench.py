@@ -64,6 +64,7 @@ local sdk = {
             while _G.LRCodexStudio_WindowOpen do coroutine.yield() end
         end,
         runOpenPanel = function() return nil end,
+        confirm = function() return storageConfirmation or 'cancel' end,
         runSavePanel = function(options) assert(options.requiredFileType == 'xmp'); return savePanelPath end},
     LrFileUtils = {exists = function(file) return file ~= '' end},
     LrFunctionContext = {callWithContext = function(_, fn) fn({}) end},
@@ -95,6 +96,11 @@ package.loaded.StudioClient = {request=function(method, route, body)
         if pollCount<=(pollWaits or 0) then return {id='task',state='running',stage=nextAction,cancellable=true} end
     end
     if route=='/cancel' then return {ok=true} end
+    if route=='/storage' then
+        if method=='GET' then return {jobs={bytes=2048},styles={bytes=0},batches={bytes=0},trash={bytes=0},archives={}} end
+        if body.action=='inspect' then return {records=1,images=1,bytes=2048} end
+        if body.action=='trash' then return {records=1,images=1,bytes=2048} end
+    end
     if route:find('^/styles/.-/xmp$') then return {path=body.output,keys={'Shadows2012'}} end
     if route:find('^/jobs/') then return recoveryJob or savedJob end
     if route:find('^/batches/') then return savedBatch end
@@ -198,6 +204,25 @@ class WorkbenchLuaTests(unittest.TestCase):
                 assert(call.route~='/cancel')
             end
             assert(submissions==1)
+        ''')
+
+    def test_storage_counts_and_confirms_before_moving_a_record(self):
+        self.run_lua(r'''
+            button('读取选中照片').action();step();step()
+            props().prompt='soft';button('生成方案').action();step();step();step()
+            props().storageId=currentSavedJob().id
+            button('查看容量').action();step()
+            assert(props().storageSummary:find('2.0 KB',1,true))
+            button('移到回收站').action();step()
+            for _,call in ipairs(clientCalls) do assert(not call.body or call.body.action~='trash') end
+            storageConfirmation='ok'
+            button('移到回收站').action();step()
+            assert(props().storageMessage=='已移到回收站。')
+            local count=0
+            for _,call in ipairs(clientCalls) do
+                if call.body and call.body.action=='trash' then count=count+1 end
+            end
+            assert(count==1)
         ''')
 
     def test_existing_dialog_is_brought_to_front_and_can_reopen_after_close(self):

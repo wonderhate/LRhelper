@@ -43,9 +43,6 @@ jobs:
           npm --prefix server test -- --runInBand
       - name: Live-kit unit tests
         run: node --test "tests/e2e/live/unit/*.test.mjs"
-      - name: Bundled skill tests
-        working-directory: skills/raw-photo-lightroom-preset
-        run: python -m unittest discover -s tests -v
       - name: Native Lua controller tests
         shell: pwsh
         run: |
@@ -65,6 +62,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Bundled skill tests
+        working-directory: skills/raw-photo-lightroom-preset
+        run: python3 -m unittest discover -s tests -v
       - name: Run Lua 5.1 specs
         run: |
           sudo apt-get update

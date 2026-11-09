@@ -45,7 +45,7 @@ export function parseBatchPhotos(input: unknown): string[] {
 }
 
 export class BatchQueue {
-  private readonly root: string;
+  readonly root: string;
 
   constructor(private readonly host: StudioHost) {
     this.root = path.join(path.dirname(host.store.root), "batches");
@@ -56,7 +56,7 @@ export class BatchQueue {
     return path.join(this.root, id);
   }
 
-  private async load(id: string): Promise<Batch> {
+  async load(id: string): Promise<Batch> {
     const problem = "批次记录无效";
     const batch = await readRecord(this.dir(id), "batch.json", problem);
     if (!validBatch(batch) || batch.id !== id
@@ -64,6 +64,19 @@ export class BatchQueue {
       || (batch.blockedByPhotoId && !batch.items.some(item => item.photoId === batch.blockedByPhotoId))) throw new Error(problem);
     parseBatchPhotos(batch.items.map(item => item.photoId));
     return batch;
+  }
+
+  async references(jobIds: Set<string>): Promise<boolean> {
+    const entries = await readdir(this.root,{withFileTypes:true}).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isRecordId(entry.name)) continue;
+      const batch = await this.load(entry.name).catch(() => undefined);
+      if (batch?.items.some(item => jobIds.has(item.jobId))) return true;
+    }
+    return false;
   }
 
   private async save(batch: Batch) {

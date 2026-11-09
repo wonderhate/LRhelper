@@ -13,8 +13,7 @@ function Get-VerifiedZip([string]$File) {
 }
 $studioZip = Get-VerifiedZip $Package
 $studioPreviousZip = Get-VerifiedZip $PreviousPackage
-$studioRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$studioTest = Join-Path $studioRepo ('.studio/release-checks/run ' + [Guid]::NewGuid().ToString('N'))
+$studioTest = Join-Path ([IO.Path]::GetTempPath()) ('LRhelper run ' + [Guid]::NewGuid().ToString('N'))
 $studioInstall = Join-Path $studioTest 'clean install'
 $studioNew = Join-Path $studioTest 'new package'
 $studioOld = Join-Path $studioTest 'previous version fixture'

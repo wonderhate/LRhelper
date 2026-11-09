@@ -65,5 +65,8 @@ function Remove-StudioManagedDirectory([string]$Root, [string]$Name, [string]$Ex
     $studioTarget = Get-Item -LiteralPath (Join-Path $studioRoot.FullName $Name) -Force -ErrorAction Stop
     if ($studioTarget.Parent.FullName -ne $studioRoot.FullName -or $studioTarget.Name -cne $Name) { throw 'Managed directory is outside the install root.' }
     $null = Get-StudioRegularFiles $studioTarget.FullName
-    Remove-Item -LiteralPath $studioTarget.FullName -Recurse -Force
+    $studioPath = $studioTarget.FullName
+    $studioExtended = if ($studioPath.StartsWith('\\')) { '\\?\UNC\' + $studioPath.Substring(2) } else { '\\?\' + $studioPath }
+    # Windows PowerShell 5.1 can enumerate a package and still fail to delete paths longer than MAX_PATH.
+    [IO.Directory]::Delete($studioExtended, $true)
 }

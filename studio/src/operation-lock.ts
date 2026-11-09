@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, lstat, realpath, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { readRecord } from "./local-files.js";
@@ -52,7 +52,9 @@ async function clearDeadOwner(directory: string, filename: string) {
   throw new Error(busy);
 }
 
-export async function withOperationLock<T>(directory: string, fn: () => Promise<T>): Promise<T> {
+export type MoveLockedDirectory = (destination: string) => Promise<void>;
+
+export async function withOperationLock<T>(directory: string, fn: (move: MoveLockedDirectory) => Promise<T>): Promise<T> {
   const releaseGate = await takeGate(directory);
   try {
     const filename = path.join(directory, "operation.lock");
@@ -71,10 +73,14 @@ export async function withOperationLock<T>(directory: string, fn: () => Promise<
     } finally {
       await unlink(pending).catch(() => {});
     }
+    let current = directory;
     try {
-      return await fn();
+      return await fn(async destination => {
+        await rename(current, destination);
+        current = destination;
+      });
     } finally {
-      await unlink(filename);
+      await unlink(path.join(current, "operation.lock"));
     }
   } finally {
     await releaseGate();
