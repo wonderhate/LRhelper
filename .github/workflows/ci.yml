@@ -77,4 +77,5 @@ jobs:
           gh release download 0.32.0 -R Kampfkarren/selene -p selene-0.32.0-linux.zip -D "$RUNNER_TEMP"
           printf '%s  %s\n' d3773393578580074386e69337d35b7acddfbaa9fc38964c07fa3e28436ade9b "$RUNNER_TEMP/selene-0.32.0-linux.zip" | sha256sum --check
           unzip -q "$RUNNER_TEMP/selene-0.32.0-linux.zip" -d "$RUNNER_TEMP/selene"
+          chmod +x "$RUNNER_TEMP/selene/selene"
           "$RUNNER_TEMP/selene/selene" plugin/LightroomMCP.lrplugin
