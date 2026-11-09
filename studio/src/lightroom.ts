@@ -35,7 +35,7 @@ export class LightroomClient implements Lightroom {
     await this.client.connect(new StdioClientTransport({command:process.execPath,args:[this.serverEntry],env:{...env,LIGHTROOM_MCP_TOOLSETS:"all",LIGHTROOM_MCP_READ_ONLY:this.checkOnly ? "true" : "false"},maxBufferSize:16*1024*1024}));
   }
   async close() { await this.client.close(); }
-  async bridgeStatus() { return this.call("get_bridge_status",{}); }
+  async bridgeStatus(signal?: AbortSignal) { return this.call("get_bridge_status",{},signal); }
   private async tools(signal?: AbortSignal) {
     let cursor: string | undefined;
     const tools = [];

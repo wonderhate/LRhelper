@@ -27,6 +27,13 @@ export class StudioHost {
     if(!this.lr.bridgeStatus) throw new Error("当前桥接不提供版本状态。");
     return this.lr.bridgeStatus();
   }
+  private async requireCompatibleBridge(signal?: AbortSignal) {
+    if (!this.lr.bridgeStatus) return;
+    const status=await this.lr.bridgeStatus(signal);
+    if (status.compatible!==true) {
+      throw new Error("Lightroom 桥接尚未连接或版本不兼容。请打开工作台的“连接状态”，核对实际加载的插件。");
+    }
+  }
   async capture(request: GradeRequest, photoId?: string|number, jobId?: string, signal?: AbortSignal): Promise<Job> {
     return this.captureJob(request,photoId,jobId,signal);
   }
@@ -155,6 +162,7 @@ export class StudioHost {
       if(job.status!=="captured") throw new Error("Only a newly captured photo can be planned");
       try {
         signal?.throwIfAborted();
+        await this.requireCompatibleBridge(signal);
         const keys=allowedKeys(job.capabilities,job.baseline);
         if(!keys.length) throw new Error("No supported global grading settings available");
         const chain=await this.chain(id),parents=chain.slice(0,-1);
@@ -181,6 +189,7 @@ export class StudioHost {
     return this.store.lock(id,async()=>{
       const job=await this.store.load(id);
       if(job.status!=="planned" || !job.plan || !job.settings) throw new Error("Job is not an unapplied plan");
+      await this.requireCompatibleBridge();
       // Revalidate persisted plans against CURRENT capabilities, not saved discovery.
       const keys=allowedKeys(await this.lr.discover(),job.baseline);
       Object.assign(job,this.mapChain(await this.chain(id),keys));
@@ -304,6 +313,7 @@ export class StudioHost {
     return this.store.lock(id,async()=>{
       const job=await this.store.load(id);
       if(job.copyId===undefined || !job.snapshotId) throw new Error("Job has no recoverable copy/snapshot");
+      await this.requireCompatibleBridge();
       job.renderCompleted ??= await hasVerifiedPreview(job,this.store.dir(id));
       job.status="restoring";await this.store.save(job);
       try {

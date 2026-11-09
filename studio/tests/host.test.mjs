@@ -70,6 +70,16 @@ test('source edits made while model was running prevent preview before copy crea
   f.source.developSettings.exposure=2;
   await assert.rejects(f.host.preview(job.id),/changed/);assert.equal(f.calls.length,0);
 });
+test('incompatible Lightroom bridge blocks both model generation and preview before side effects', async t => {
+  const f=await setup(t), first=await f.capture(), second=await f.capture();
+  await f.host.plan(first.id);
+  f.lr.bridgeStatus=async()=>({compatible:false});
+  await assert.rejects(f.host.plan(second.id),/版本不兼容/);
+  await assert.rejects(f.host.preview(first.id),/版本不兼容/);
+  assert.equal(f.modelCalls,1);
+  assert.equal(f.calls.length,0);
+  assert.equal((await f.store.load(first.id)).status,'planned');
+});
 test('capability removed after planning is rejected before any mutation',async t=>{
   const f=await setup(t),job=await f.capture();await f.host.plan(job.id);f.lr.keys=[];
   await assert.rejects(f.host.preview(job.id),/Invalid grading/);assert.equal(f.calls.length,0);

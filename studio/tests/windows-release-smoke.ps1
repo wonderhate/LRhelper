@@ -53,6 +53,11 @@ function Assert-StudioVersion([string]$Version) {
     if ($LASTEXITCODE -ne 0 -or $studioActive -ne $Version) { throw "Expected $Version, got $studioActive" }
 }
 
+function Test-ReleaseJournals([string]$Action, [string]$DataRoot) {
+    & node.exe (Join-Path $PSScriptRoot 'windows-release-journals.mjs') $Action $studioCurrent $DataRoot $studioTest
+    if ($LASTEXITCODE -ne 0) { throw "Release journal check failed: $Action" }
+}
+
 try {
     & (Join-Path $studioOld 'Install.ps1') -InstallRoot $studioInstall
     Assert-StudioVersion $studioPriorVersion
@@ -61,6 +66,7 @@ try {
     $studioData = Join-Path $studioInstall 'data/jobs'
     [void](New-Item -ItemType Directory -Path $studioData)
     [IO.File]::WriteAllText((Join-Path $studioData 'persistence-test.txt'), 'retained')
+    Test-ReleaseJournals 'create' $studioData
     $studioManifestFile = Join-Path $studioNew 'app/studio/package.json'
     $studioBytes = [IO.File]::ReadAllBytes($studioManifestFile)
     [IO.File]::AppendAllText($studioManifestFile, " ")
@@ -73,6 +79,7 @@ try {
     & (Join-Path $studioNew 'Install.ps1') -InstallRoot $studioInstall
     & (Join-Path $studioNew 'Install.ps1') -InstallRoot $studioInstall
     Assert-StudioVersion $studioRelease.version
+    Test-ReleaseJournals 'verify' $studioData
     $studioConfig = & node.exe $studioCli config | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $studioConfig.useSystemProxy -ne $false -or $studioConfig.jobsDirectory -ne $studioData) { throw 'Installed settings did not persist.' }
 
@@ -96,6 +103,7 @@ try {
     Assert-StudioVersion $studioRelease.version
     & (Join-Path $studioInstall 'Rollback.ps1')
     Assert-StudioVersion $studioPriorVersion
+    Test-ReleaseJournals 'verify' $studioData
     if ((Get-Content -LiteralPath $studioSettings -Raw) -ne '{"useSystemProxy":false}' -or (Get-Content -LiteralPath (Join-Path $studioData 'persistence-test.txt') -Raw) -ne 'retained') { throw 'Rollback changed persistent state.' }
     & (Join-Path $studioNew 'Install.ps1') -InstallRoot $studioInstall
     Assert-StudioVersion $studioRelease.version
