@@ -1,8 +1,9 @@
 # 变更记录
 
-## 1.1.0 · 未发布
+## 1.1.0 · 2026-11-09
 
 - 桥接检查已加载的插件身份和协议。连接中断或响应无效时，明确区分未发送与结果未知。
+- 增效工具管理器会保存自定义桥接端口，并阻止请求与响应共用同一端口。
 - 中断的预览可核对虚拟副本和快照。批量预览可在当前照片完成后停止，窗口关闭重开后可继续跟踪任务。
 - 存储页支持查看容量、导出备份、移入回收站、恢复和按天数清理。
 - Windows 安装支持预检、修复、回滚和保留数据的卸载。发布包从 Git 提交构建，包含来源与文件清单。
@@ -15,4 +16,4 @@
 - 多轮对话、保存风格、固定 XMP 导出、2–8 张照片的批量适配。
 - 单张照片可选主体和天空蒙版，按可见肤色限制红橙 HSL 的变化。
 
-[发布文件](https://github.com/wonderhate/LRhelper/releases/tag/v1.0.0) · [Windows 安装指南](docs/studio/RELEASE-WINDOWS.zh-CN.md)
+[发布文件](https://github.com/wonderhate/LRhelper/releases/latest) · [Windows 安装指南](docs/studio/RELEASE-WINDOWS.zh-CN.md)

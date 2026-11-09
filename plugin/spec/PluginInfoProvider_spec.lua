@@ -76,7 +76,7 @@ local function installStubs(prefs, asyncTasks, opts)
             end,
         },
         LrPrefs = { prefsForPlugin = function() return prefs or {} end },
-        LrView = { bind = function() end },
+        LrView = { bind = function(binding) return binding end },
         LrUUID = { generateUUID = function() return "0000-0000" end },
         LrPathUtils = {
             child = function(a, b) return a .. "/" .. b end,
@@ -102,6 +102,32 @@ local function loadPluginInit()
     package.loaded.PluginInit = nil
     require 'PluginInit'
 end
+
+describe("Plug-in Manager configuration", function()
+    it("binds the port fields to the supplied observable table", function()
+        local prefs = {}
+        installStubs(prefs)
+        local properties = { addObserver = function() end }
+        local factory = setmetatable({}, { __index = function()
+            return function(_, args) return args end
+        end })
+        local section = loadInfoProvider().sectionsForTopOfDialog(factory, properties)[1]
+        assert.are.equal(properties, section[2].value.bind_to_object)
+        assert.are.equal(properties, section[3][2].value.bind_to_object)
+        assert.are.equal("requestPort", section[3][2].value.key)
+        assert.are.equal(properties, section[4][2].value.bind_to_object)
+        assert.are.equal("responsePort", section[4][2].value.key)
+    end)
+
+    it("does not start or bind if the configured ports are equal", function()
+        _G.LightroomMCP_State = nil
+        local binds = {}
+        installStubs({ requestPort = 59163, responsePort = 59163 }, nil, { capturedBinds = binds, runTask = true, stopLoopOnSleep = true })
+        loadInfoProvider().startServer()
+        assert.is_false(_G.LightroomMCP_State.running)
+        assert.are.equal(0, #binds)
+    end)
+end)
 
 describe("PluginInfoProvider lifecycle", function()
     before_each(function()

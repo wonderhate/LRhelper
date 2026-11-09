@@ -499,13 +499,19 @@ local function startServer()
     -- second pair of LrSocket listeners on the same ports.
     pluginState.running = true
 
+    local requestPort, responsePort = readPortPrefs()
+    if requestPort == responsePort then
+        pluginState.running = false
+        addLog("Request and response ports must be different")
+        return
+    end
+
     pluginState.token = generateToken()
     local tokenWritten = writeTokenFile(pluginState.token)
     if tokenWritten then
         addLog("Local authentication file updated")
     end
 
-    local requestPort, responsePort = readPortPrefs()
     pluginState.requestPort = requestPort
     pluginState.responsePort = responsePort
 
@@ -935,12 +941,12 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
             },
             f:checkbox {
                 title = "Auto-start server on Lightroom launch",
-                value = LrView.bind('autoStartServer'),
+                value = LrView.bind { key = 'autoStartServer', bind_to_object = propertyTable },
             },
             f:row {
                 f:static_text { title = "Request port:", width = 110 },
                 f:edit_field {
-                    value = LrView.bind('requestPort'),
+                    value = LrView.bind { key = 'requestPort', bind_to_object = propertyTable },
                     width_in_chars = 7,
                     precision = 0,
                     min = 1,
@@ -951,7 +957,7 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
             f:row {
                 f:static_text { title = "Response port:", width = 110 },
                 f:edit_field {
-                    value = LrView.bind('responsePort'),
+                    value = LrView.bind { key = 'responsePort', bind_to_object = propertyTable },
                     width_in_chars = 7,
                     precision = 0,
                     min = 1,

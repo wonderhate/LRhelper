@@ -9,10 +9,10 @@ Lightroom Classic 原生调色工作台。用文字、参考图或自动分析�
 
 ## 安装与开始
 
-当前发布包面向 **Windows x64**。需要 Lightroom Classic、Node.js 22 或更新版本，以及已登录、可从 PowerShell 调用的 Codex CLI。1.0 在 Lightroom Classic 15.0.1 上实机验证。
+当前发布包面向 **Windows x64**。需要 Lightroom Classic、Node.js 22 或更新版本，以及已登录、可从 PowerShell 调用的 Codex CLI。1.1 的调色预览与恢复流程在 Lightroom Classic 15.0.1 上实机验证。
 
 1. 从 [Releases](https://github.com/wonderhate/LRhelper/releases/latest) 下载 Windows ZIP，解压后运行 `./Install.ps1`。
-2. 在 Lightroom 的「文件 → 增效工具管理器」添加安装目录下的 `current/plugin/LRCodexStudio.lrplugin`。若尚未安装 Lightroom MCP，也添加同目录的 `LightroomMCP.lrplugin` 并启动其服务。
+2. 在 Lightroom 的「文件 → 增效工具管理器」添加安装包内的 Studio 和 Lightroom MCP 插件。若已有同名旧插件，先停用旧条目，再添加新版并重启 Lightroom。
 3. 运行 `current/scripts/start-studio-host.ps1`，从 Lightroom 的「增效工具额外信息」打开 **LR Codex Studio**。
 4. 选中一张照片并读取，生成方案后查看「参数差异」。点「预览副本」才会在新虚拟副本上执行。每份预览有独立快照，可通过「恢复副本」回到基线。
 
@@ -28,6 +28,7 @@ Lightroom Classic 原生调色工作台。用文字、参考图或自动分析�
 | 风格库与 XMP | 保存调色意图和参考图副本，应用时适配新照片，也可导出固定参数的 XMP。 |
 | 批量适配 | 对选中的 2–8 张照片独立生成全局方案，再逐张或整批预览。 |
 | 主体与天空 | 单张照片可选局部蒙版。检测到肤色或判断不确定时，会限制红橙 HSL 的改动幅度。 |
+| 存储与任务恢复 | 在「存储」页查看用量、导出备份和恢复回收站记录。预览中断后可核对虚拟副本和快照。 |
 
 ## 数据与恢复
 
@@ -56,7 +57,7 @@ npm --prefix server test -- --runInBand
 Windows ZIP 与 SHA-256 校验文件在 [Releases](https://github.com/wonderhate/LRhelper/releases/latest) 提供。GitHub Packages 的 OCI 制品镜像相同的安装文件，适合自动化下载。
 
 ```powershell
-oras pull ghcr.io/wonderhate/lrhelper:1.0.0
+oras pull ghcr.io/wonderhate/lrhelper:1.1.0
 ```
 
 项目以 [Automaat/lightroom-mcp](https://github.com/Automaat/lightroom-mcp) 的 `b0899c5` 为桥接基线。参考图适配流程借鉴了 [Ashla](https://github.com/JeremySNR/ashla-lightroom) 的交互思路。源代码采用 [MIT](LICENSE) 许可。
