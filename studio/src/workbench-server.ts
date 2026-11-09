@@ -60,7 +60,8 @@ export class WorkbenchServer {
   private url = "";
   private readonly server = createServer((req,res) => {void this.route(req,res);});
 
-  constructor(private readonly host: StudioHost, readonly configPath = defaultHostFile(), private readonly onShutdown?: ()=>void, private readonly root?: string) {}
+  constructor(private readonly host: StudioHost, readonly configPath = defaultHostFile(), private readonly onShutdown?: ()=>void,
+    private readonly root?: string, private readonly codexVersion?: ()=>Promise<string>) {}
 
   async start(port = 0) {
     let previous: {url?: string; token?: string} | undefined;
@@ -104,7 +105,13 @@ export class WorkbenchServer {
     if (req.headers.host !== new URL(this.url).host) {this.send(res,403,{error:"Invalid host"});return;}
     try {
       if (req.method === "GET" && req.url === "/health") {this.send(res,200,{ok:true,version:VERSION,busy:!!(this.active || this.storageOperation),root:this.root});return;}
-      if (req.method === "GET" && req.url === "/bridge") {this.send(res,200,{studio_version:VERSION,...await this.host.bridgeStatus()});return;}
+      if (req.method === "GET" && req.url === "/bridge") {
+        const [bridge,codex]=await Promise.all([
+          this.host.bridgeStatus().catch(()=>({compatible:false,message:"无法读取桥接状态，请检查 Lightroom MCP 是否已更新。"})),
+          this.codexVersion?.().catch(()=>undefined),
+        ]);
+        this.send(res,200,{studio_version:VERSION,codex_version:codex,...bridge});return;
+      }
       if (req.method === "GET" && req.url === "/storage") {this.send(res,200,await this.host.storage.summary());return;}
       if (req.method === "POST" && req.url === "/storage") {
         const body=await requestBody(req);

@@ -14,16 +14,19 @@ export const modelOnlyOverrides = [
 type ConfiguredServer = {name: string; enabled: boolean};
 type Query = (args: string[])=>Promise<ConfiguredServer[]>;
 
-export async function checkCodex(cli: string, env: Record<string,string>) {
-  let version: string;
+export async function codexVersion(cli: string, env: Record<string,string>): Promise<string> {
   try {
     const result = await execute(cli,["--version"],{env,windowsHide:true,timeout:5000,maxBuffer:64*1024});
     const match = /^codex(?:-cli)?\s+([\d.]+(?:[-+][\w.-]+)?)/i.exec(result.stdout.trim());
     if (!match) throw new Error("Unrecognized version");
-    version = match[1];
+    return match[1];
   } catch {
     throw new Error("找不到可用的 Codex CLI。请安装 CLI，或在设置中指定 codexPath。");
   }
+}
+
+export async function checkCodex(cli: string, env: Record<string,string>) {
+  const version = await codexVersion(cli,env);
   if (!env.CODEX_API_KEY && !env.OPENAI_API_KEY) {
     try {
       await execute(cli,["login","status"],{env,windowsHide:true,timeout:5000,maxBuffer:64*1024});

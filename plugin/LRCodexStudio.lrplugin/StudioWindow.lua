@@ -561,6 +561,7 @@ function Window.show()
                             lines[#lines + 1] = 'Studio Host ' .. (result.studio_version or '未知')
                             lines[#lines + 1] = 'MCP 服务端 ' .. (result.server_version or '未知')
                             lines[#lines + 1] = 'Lightroom MCP 插件 ' .. (result.plugin_version or '未报告版本')
+                            lines[#lines + 1] = 'Codex CLI ' .. (result.codex_version or '未找到')
                             lines[#lines + 1] = result.compatible and '插件连接正常，可创建预览副本。'
                                 or (result.message or '尚未确认插件兼容性。')
                         else

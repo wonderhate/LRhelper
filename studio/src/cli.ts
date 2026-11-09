@@ -11,6 +11,8 @@ import type { Mode } from "./types.js";
 import { loadConfiguration } from "./configuration.js";
 import { VERSION } from "./version.js";
 import { preflight } from "./preflight.js";
+import { codexVersion } from "./runtime-isolation.js";
+import { runtimeEnvironment } from "./runtime-environment.js";
 
 const HELP=`LR Codex Studio ${VERSION} — 调色、风格与局部蒙版
 
@@ -94,7 +96,8 @@ async function main() {
   try {
     await client.connect();
     if(command==="serve") {
-      const server = new WorkbenchServer(host,config.hostFile,()=>controller.abort(),root);
+      const server = new WorkbenchServer(host,config.hostFile,()=>controller.abort(),root,
+        async ()=>codexVersion(config.codexPath,await runtimeEnvironment()));
       await server.start();
       console.error("Studio Host 已就绪，可从 Lightroom 菜单打开工作台。按 Ctrl+C 退出。");
       await new Promise<void>(resolve => {controller.signal.addEventListener("abort",()=>resolve(),{once:true});process.once("SIGTERM",()=>resolve());});

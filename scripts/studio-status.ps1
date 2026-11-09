@@ -16,6 +16,7 @@ $studioLastLog = Get-ChildItem -LiteralPath $studioLogs -Filter '*.stderr.log' -
     version = $studioHealth.version
     bridgeVersion = $studioBridge.server_version
     lightroomMcpPluginVersion = $studioBridge.plugin_version
+    codexVersion = $studioBridge.codex_version
     bridgeProtocol = $studioBridge.plugin_protocol
     bridgeCompatible = $studioBridge.compatible
     bridgeMessage = $studioBridge.message
