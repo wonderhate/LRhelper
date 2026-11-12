@@ -6,6 +6,7 @@ Lightroom Classic 原生调色工作台。用文字、参考图或自动分析�
 
 [![Windows CI](https://github.com/wonderhate/LRhelper/actions/workflows/ci.yml/badge.svg)](https://github.com/wonderhate/LRhelper/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![M8ven Verified](https://m8ven.ai/badge/mcp/wonderhate-lrhelper-1in8ak?variant=verified&v=af37219a04bb9ee6d1736eb3f91325a8)](https://m8ven.ai/mcp/wonderhate-lrhelper-1in8ak?s=readme)
 
 ## 安装与开始
 
