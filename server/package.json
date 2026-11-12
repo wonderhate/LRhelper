@@ -1,5 +1,5 @@
 {
-  "name": "@mskalski/lightroom-mcp",
+  "name": "@wonderhate/lrhelper",
   "version": "0.26.0",
   "description": "MCP server bridging Claude/Codex/ChatGPT to Adobe Lightroom Classic via a Lua plugin.",
   "type": "module",
@@ -40,14 +40,14 @@
   ],
   "author": "Marcin Skalski",
   "license": "MIT",
-  "homepage": "https://github.com/Automaat/lightroom-mcp#readme",
+  "homepage": "https://github.com/wonderhate/LRhelper#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Automaat/lightroom-mcp.git",
+    "url": "git+https://github.com/wonderhate/LRhelper.git",
     "directory": "server"
   },
   "bugs": {
-    "url": "https://github.com/Automaat/lightroom-mcp/issues"
+    "url": "https://github.com/wonderhate/LRhelper/issues"
   },
   "engines": {
     "node": ">=20"
@@ -69,5 +69,5 @@
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "typescript-eslint": "^8.59.3"
   },
-  "mcpName": "io.github.Automaat/lightroom-mcp"
+  "mcpName": "io.github.wonderhate/lrhelper"
 }
