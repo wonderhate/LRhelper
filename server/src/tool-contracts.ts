@@ -10,7 +10,8 @@ export interface ToolContract {
   title: string;
   annotations: {
     readOnlyHint: boolean;
-    destructiveHint?: boolean;
+    destructiveHint: boolean;
+    idempotentHint: boolean;
     openWorldHint: false;
   };
   description: string;
@@ -537,7 +538,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_bridge_status",
     toolset: "core",
     title: "Bridge status",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     description: "Read loaded plugin version and compatibility.",
     luaHandler: "BridgeIdentity.describe",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -547,7 +548,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     toolset: "core",
     alwaysLoad: true,
     title: "Search photos",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerSearch.searchPhotos",
     description:
       "Search with intersecting Library filters. Use a filter for large catalogs. Default page: 100 photos.",
@@ -566,7 +567,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_selected_photos",
     toolset: "core",
     title: "Get selected photos",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerSelection.getSelectedPhotos",
     description: "Get currently selected photos in Lightroom (or filmstrip if no selection). Paginated, default limit 100.",
     inputSchema: {
@@ -583,7 +584,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "summarize_develop_settings",
     toolset: "develop",
     title: "Summarize develop settings",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerStyleSummary.summarize",
     description:
       "Read numeric Develop medians, ranges and counts by camera and ISO band. Excludes crop, perspective, Temperature/Tint and all-zero settings. Scanned/matched/truncated and settings_omitted describe coverage.",
@@ -601,7 +602,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_photo_metadata",
     toolset: "core",
     title: "Get photo metadata",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerMetadata.getPhotoMetadata",
     description:
       "Read 1-100 photos: keywords/nested keywordPaths, EXIF, title/caption/headline, GPS latitude/longitude/altitude, IPTC sublocation/city/stateProvince/country/isoCountryCode, copyright, accessibility alt_text/extended_description (LrC 13.2+, omitted empty/unsupported), and optional developSettings. IDs are catalog local. isVirtualCopy marks copies; optional virtualCopy contains masterPhotoId or master copyIds. Optional folder stack contains position (top=1), isCollapsed, topPhotoId and ordered memberIds. developSettings is absent by default; request sections: [\"developSettings\"] to read it. Empty sections omits it; duplicates are accepted. developSettings covers every set_develop_settings key: basic/tone/parametric curves use camelCase; hsl/lens/transform/crop/detail/effects/parametricSplits use SDK names; empty groups are omitted.",
@@ -627,7 +628,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     toolset: "core",
     alwaysLoad: true,
     title: "Get photo preview",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerPreview.getPhotoPreview",
     description:
       "Lightroom-rendered JPEG with Develop edits (raw supported). region crops the rendered frame after develop crop/rotation: normalized x/y/width/height, origin top-left, x right, y down. width/height/bytes are actual; requested_size is the source request. See size for cost/edge rules.",
@@ -663,7 +664,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_photo_previews",
     toolset: "core",
     title: "Get batch photo previews",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerPreview.getPhotoPreviews",
     description:
       "Get JPEG thumbnails for 1–20 photos in input order for culling. Maps requested_id/photo_id to 1-based image_index; errors have no image and do not fail the batch. Default size 256; max edge 2000px; total budget 8 MiB. After 20 s returns complete:false and remaining_ids to retry. Catalog unchanged.",
@@ -684,7 +685,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "find_duplicate_groups",
     toolset: "core",
     title: "Find duplicate groups",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerPreview.findDuplicateGroups",
     description:
       "Group near-duplicates/bursts from up to 100 IDs/paths using 64-bit dHash of current JPEG previews (minimum edge 64) and raw capture time. Every pair must meet inclusive time_window_seconds (default 5) and max_hamming_distance (default 10). Input-order groups omit singletons and repeated photos; IDs are resolved. Approximate similarity does not rank frames. photos gives raw capture_time in Lightroom seconds (second precision, no timezone normalization). No hash cache or catalog changes. At 25 s returns partial groups, complete=false, remaining_ids; preview/missing-time failures are unprocessed with reasons. Retry remaining IDs with originals to grow groups.",
@@ -703,7 +704,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_photo_stats",
     toolset: "core",
     title: "Get photo statistics",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerPreview.getPhotoStats",
     description:
       "Measure current rendered JPEG previews for up to 20 photos; result/error per input ID. histogram: 64 normalized Rec.709 luma bins (0-255, four levels/bin); mean_luminance same scale; shadow_fraction <=1, highlight_fraction >=254. sharpness: four-neighbor Laplacian variance after area resampling to 512px long edge (enlarges small previews); higher=sharper. These measure JPEG previews, not raw clipping/full-resolution focus. Catalog unchanged.",
@@ -726,7 +727,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_gps",
     toolset: "core",
     title: "Set GPS",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerMetadata.setGps",
     description:
       "Replace GPS coordinates in decimal degrees. Altitude stays unless altitude or clear_altitude is given. Returns success, updated and missing IDs.",
@@ -765,7 +766,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_location",
     toolset: "core",
     title: "Set location",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerMetadata.setLocation",
     description:
       "Set IPTC location fields from get_photo_metadata; at least one is required. Omitted fields stay, empty strings clear. GPS stays (use set_gps). Returns success, updated, fields and missing IDs.",
@@ -793,7 +794,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_metadata",
     toolset: "core",
     title: "Set metadata",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerMetadata.setMetadata",
     description:
       "Set IPTC text from get_photo_metadata. Accessibility needs LrC 13.2+. At least one field; omitted fields stay, empty strings clear. Copyright status is unwritable. Returns success, updated, fields and missing IDs.",
@@ -820,7 +821,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_ai_metadata",
     toolset: "core",
     title: "Set AI metadata",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerAiMetadata.setAiMetadata",
     description:
       "Store an AI score and reason in private per-photo plug-in metadata in this catalog. Provide score, reason or both. Score is an integer from 0 to 100; reason is at most 1024 characters. Omitted fields stay unchanged; an empty string clears a field. Does not change IPTC, XMP, keywords, or export metadata.",
@@ -840,7 +841,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_ai_metadata",
     toolset: "core",
     title: "Get AI metadata",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerAiMetadata.getAiMetadata",
     description:
       "Read private per-photo AI scores and reasons in one batch (up to 1000 IDs or paths). Returns photos with photo_id, numeric score and reason; unset fields are omitted. Missing IDs are reported separately.",
@@ -855,7 +856,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "list_folders",
     toolset: "core",
     title: "List folders",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerFolders.listFolders",
     description: "List catalog folders in tree order as a paginated flat list of full paths, names and photo_count (direct photos only, excluding subfolders). Default limit 100.",
     inputSchema: {
@@ -871,7 +872,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_folder_photos",
     toolset: "core",
     title: "Get folder photos",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerFolders.getFolderPhotos",
     description: "List photos in a catalog folder by its full path from list_folders (paginated, default limit 100). Subfolders are excluded by default.",
     inputSchema: {
@@ -890,7 +891,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "list_collections",
     toolset: "core",
     title: "List collections",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerCollections.listCollections",
     description: "List all collections in Lightroom catalog (paginated, default limit 100)",
     inputSchema: {
@@ -906,7 +907,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_collection",
     toolset: "core",
     title: "Create collection",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerCollections.createCollection",
     description: "Create a collection; returns success and its path.",
     inputSchema: {
@@ -927,7 +928,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_smart_collection",
     toolset: "core",
     title: "Create smart collection",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerCollections.createSmartCollection",
     description: "Save intersecting search_photos filters as an auto-updating smart collection; at least one filter. Creates missing parent sets; rejects existing sibling names. Returns success and path.",
     inputSchema: {
@@ -946,7 +947,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "add_to_collection",
     toolset: "core",
     title: "Add to collection",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerCollections.addToCollection",
     description:
       "Add photos to a collection; returns success, added count and missing IDs.",
@@ -968,7 +969,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_collection_photos",
     toolset: "core",
     title: "Get collection photos",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerCollections.getCollectionPhotos",
     description:
       "List the photos in a collection, regular or smart (paginated, default limit 100). Use a path from list_collections when names repeat; an ambiguous bare name is rejected.",
@@ -992,7 +993,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "remove_from_collection",
     toolset: "core",
     title: "Remove from collection",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerCollections.removeFromCollection",
     description:
       "Remove photos from a regular collection; catalog and other memberships stay. Returns success, removed (unique members), not_in_collection and missing IDs.",
@@ -1014,7 +1015,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "delete_collection",
     toolset: "core",
     title: "Delete collection",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerCollections.deleteCollection",
     description:
       "Delete a collection; photos stay in the catalog. Returns success, photo_count and that reminder.",
@@ -1035,7 +1036,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_keywords",
     toolset: "core",
     title: "Set keywords",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerOrganization.setKeywords",
     description:
       "Add/remove keyword names or parent-first '|' paths from list_keywords, ignoring case. Missing names create top-level keywords; paths create missing levels unless create_missing=false. Returns success and updated count.",
@@ -1065,7 +1066,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "remove_keyword_subtree",
     toolset: "core",
     title: "Remove keyword subtree",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerOrganization.removeKeywordSubtree",
     description:
       "Detach a parent keyword and every descendant from photo_ids, or all tagged photos with catalog_wide=true. Matches paths ignoring case; unknown parent fails unchanged. Preserves unrelated and same-named keywords elsewhere. Keyword nodes stay in the catalog and list_keywords. Use a dedicated parent such as 'AI Keywords' with set_keywords to undo a tagging batch. Returns updated photo count, removed assignment count and missing IDs.",
@@ -1091,7 +1092,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "list_keywords",
     toolset: "core",
     title: "List keywords",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerKeywords.listKeywords",
     description:
       "List paginated parent-first keyword paths ('Places|Europe|Paris'), synonyms and include-on-export (limit default 100). Pass paths to set_keywords; narrow large trees with parent/query or request paths_only.",
@@ -1122,7 +1123,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "rename_keyword",
     toolset: "core",
     title: "Rename keyword",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerKeywords.renameKeyword",
     description:
       "Rename in place; tagged photos update, parent/children/synonyms stay. Case-insensitive sibling conflicts fail; case-only renames work. Returns success, old_path, new_path and photo_count.",
@@ -1148,7 +1149,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "undo_last_step",
     toolset: "core",
     title: "Undo last step",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerUndo.undoLastStep",
     description:
       "Undo one shared Lightroom history step (confirm:true), including a user/other plug-in action after your edit. Ownership is unknown: call only if undoing the current last step is acceptable. Returns undone and can_undo for another undo.",
@@ -1170,7 +1171,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     toolset: "core",
     alwaysLoad: true,
     title: "Set rating and flag",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerOrganization.setRatingAndFlag",
     description: "Set rating, flag, or both in one write. Returns success, updated and missing; get_photo_metadata reports rating and pickStatus (pick 1, reject -1, none 0).",
     inputSchema: {
@@ -1197,7 +1198,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_color_label",
     toolset: "core",
     title: "Set color label",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerOrganization.setColorLabel",
     description:
       "Set a color label or none to clear; get_photo_metadata reports colorLabel. Returns success, updated and missing IDs.",
@@ -1219,7 +1220,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "remove_photos_from_catalog",
     toolset: "core",
     title: "Remove photos from catalog",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerRemoveFromCatalog.removePhotos",
     description:
       "Remove up to 100 IDs/paths from catalog, losing catalog edits/metadata; files remain on disk (LrC 14.3+, confirm:true). Include every virtual copy with its master. Deduplicates; reports missing IDs. Opens Library grid/All Photographs, restores module/sources/surviving selection; Library stays in grid view.",
@@ -1237,7 +1238,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "import_photos",
     toolset: "core",
     title: "Import photos",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerImport.importPhotos",
     description:
       "Import a photo or a folder recursively. A JPEG with a non-DNG raw file of exactly the same name (only the extension's case may differ) stays the raw's sidecar: folders leave it out and report skipped_sidecar_jpegs; importing that JPEG alone fails and names the raw. Lightroom makes no sidecar for other JPEGs, so they import as their own photos. Files already in the catalog are left unchanged and counted in already_in_catalog. Returns success, imported/skipped counts, skipped_by_extension, skipped_sidecar_jpegs, already_in_catalog, complete and remaining_paths. Only unsupported-extension notes remain in message.",
@@ -1266,7 +1267,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "export_photos",
     toolset: "core",
     title: "Export photos",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerExport.exportPhotos",
     description: "Export photos; returns success, exported count, destination, complete and remaining_ids to retry.",
     inputSchema: {
@@ -1302,7 +1303,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "export_photo_metadata",
     toolset: "core",
     title: "Export photo metadata",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerExport.exportPhotoMetadata",
     description:
       "Export up to 1000 photos to disk JSON: file/capture time/dimensions/rating/title/caption/GPS/location/keywords/keywordPaths, no develop settings. Omitted photo_ids uses selection, or filmstrip if none. Prefer over per-photo get_photo_metadata. Returns success, exported, destination and missing IDs.",
@@ -1328,7 +1329,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "list_develop_presets",
     toolset: "develop",
     title: "List develop presets",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerDevelop.listDevelopPresets",
     description: "List Lightroom-visible Develop presets and plugin-managed checkpoints (paginated, default limit 100). Filter by name or folder before paging. Returns name, folder, scope and uuid; use get_develop_preset for backing-file metadata. count is the total matches; has_more indicates another page.",
     inputSchema: {
@@ -1346,7 +1347,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_develop_preset",
     toolset: "develop",
     title: "Get develop preset",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerDevelop.getDevelopPreset",
     description:
       "Read the settings and backing-file metadata for one exact Develop preset. Use preset_uuid or provide folder/scope when names are duplicated.",
@@ -1356,7 +1357,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "compare_develop_presets",
     toolset: "develop",
     title: "Compare develop presets",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerDevelop.compareDevelopPresets",
     description:
       "Compare two Develop presets and return a deterministic per-setting diff for iterative style matching",
@@ -1374,7 +1375,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_develop_preset",
     toolset: "develop",
     title: "Create develop preset",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.createDevelopPreset",
     description:
       "Capture selected settings as a versioned plugin Develop checkpoint, hidden from Develop; export for handoff. Returns success, preset identity/file, visible_in_develop:false and a checkpoint note.",
@@ -1404,7 +1405,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "export_develop_preset",
     toolset: "develop",
     title: "Export develop preset",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.exportDevelopPreset",
     description:
       "Copy one exact custom or plugin-managed Develop preset backing file to a destination directory. Provide preset_uuid or preset_name. Existing files are never overwritten; built-in presets without backing files cannot be exported.",
@@ -1432,7 +1433,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "apply_develop_preset",
     toolset: "develop",
     title: "Apply develop preset",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.applyDevelopPreset",
     description:
       "Apply an exact Develop preset; provide preset_uuid or preset_name. Returns success, applied, resolved preset identity, missing IDs, ai_updated and ai_update_failed. AI masks recompute per target on LrC 13.3+; earlier versions or non-AI presets apply normally. message holds AI warnings only.",
@@ -1462,7 +1463,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "copy_develop_settings",
     toolset: "develop",
     title: "Copy develop settings",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.copyDevelopSettings",
     description:
       "Copy Develop settings; omitted settings includes AI masks. LrC 13.3+ recomputes each AI mask per target; earlier versions and non-AI copies behave normally. Returns success, copied, missing IDs, ai_updated count, ai_update_failed IDs and AI warning message only.",
@@ -1495,7 +1496,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "match_photo_style",
     toolset: "develop",
     title: "Match reference photo style",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.matchPhotoStyle",
     description:
       "Apply allowlisted reference global tone/color/curves/detail/noise/grain/vignette after confirming a Develop snapshot per target. Excludes crop, perspective, WhiteBalance/Temperature/Tint, lens corrections and local adjustments/AI masks. Reference cannot be a target, including path aliases. No pixel adaptation. Results: photo_id, snapshot id/name, settings_changed (differing keys); failures have reasons; missing IDs listed. Restore with apply_develop_snapshot.",
@@ -1513,7 +1514,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_develop_settings",
     toolset: "develop",
     title: "Set develop settings",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.setDevelopSettings",
     description:
       "Set Develop settings directly on a photo. Keys use allowlisted Lightroom SDK names (Exposure2012, WhiteBalance, Contrast2012, Highlights2012, Shadows2012, Whites2012, Blacks2012, Clarity2012, Vibrance, Saturation, HueAdjustmentRed, SaturationAdjustmentOrange, LuminanceAdjustmentYellow, etc.), plus RGB composite and per-channel point curves via ToneCurvePV2012, ToneCurvePV2012Red, ToneCurvePV2012Green, and ToneCurvePV2012Blue.",
@@ -1540,7 +1541,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_lens_blur",
     toolset: "develop",
     title: "Get Lens Blur",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerLensBlur.get",
     description: "Read Lens Blur active/amount/cat_eye/highlights_boost/focal_range near/far/focal_range_raw (four SDK values)/bokeh (LrC 13.3+, Process Version 3+). No computed blur returns active:false and unavailable controls. Opens Develop; shared restoration rules apply.",
     inputSchema: {
@@ -1554,7 +1555,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_lens_blur",
     toolset: "develop",
     title: "Set Lens Blur",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerLensBlur.set",
     description: "Set any subset of Lens Blur active/amount/cat_eye/highlights_boost/focal_range/bokeh (LrC 13.3+, Process Version 3+). Enables first to compute depth; active:false disables after adjustments. Validates runtime numeric ranges before writing. focal_range near/far: 0..100, near<=far; Lightroom supplies outer falloff. Returns readback; unsaved values stop with earlier changes retained. Shared Develop restoration rules apply.",
     inputSchema: {
@@ -1585,7 +1586,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_process_version",
     toolset: "develop",
     title: "Set process version",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.setProcessVersion",
     description:
       "Set Version 1–6 (confirm:true; appearance can change). Downgrades with masks are skipped to preserve guarded editing. Opens each in Develop; restore_selection defaults true. Returns previous_version/new_version and changed/unchanged/skipped/failed per photo. Missing/duplicate photos skipped. Max 100; stops near 240 s with remaining_ids to retry.",
@@ -1605,7 +1606,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_virtual_copies",
     toolset: "develop",
     title: "Create virtual copies",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerVirtualCopies.create",
     description: "Create one virtual copy per distinct photo (max 25); copy_name optionally names each. Returns copies with photo_id/master_id/copy_id and missing IDs; edit via copy_id. Restores selection/source. Repeats create more; failures can leave earlier copies.",
     inputSchema: {
@@ -1622,7 +1623,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "list_develop_snapshots",
     toolset: "develop",
     title: "List develop snapshots",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerSnapshots.list",
     description: "List a photo develop snapshots with their ids and names.",
     inputSchema: {
@@ -1638,7 +1639,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_develop_snapshot",
     toolset: "develop",
     title: "Create develop snapshot",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerSnapshots.create",
     description: "Save the current develop settings as a named snapshot. Duplicate names are rejected unless replace is true.",
     inputSchema: {
@@ -1656,7 +1657,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "apply_develop_snapshot",
     toolset: "develop",
     title: "Apply develop snapshot",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerSnapshots.apply",
     description: "Restore a photo develop settings from one of its snapshots.",
     inputSchema: {
@@ -1675,7 +1676,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "delete_develop_snapshot",
     toolset: "develop",
     title: "Delete develop snapshot",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerSnapshots.delete",
     description: "Delete one snapshot belonging to the photo.",
     inputSchema: {
@@ -1692,7 +1693,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "apply_auto_adjustments",
     toolset: "develop",
     title: "Apply auto adjustments",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.applyAutoAdjustments",
     description:
       "Apply Auto Tone, Auto White Balance or both to up to 100 photos. Set tone or white_balance true (omitted=false). Opens each in Develop and waits for settled settings; shared restoration rules apply. Returns applied/unchanged/skipped/failed with non-applied reasons; missing/duplicates skipped. Stops near 240 s with complete:false and remaining_ids to retry.",
@@ -1715,7 +1716,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "reset_develop_adjustments",
     toolset: "develop",
     title: "Reset develop adjustments",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.resetDevelopAdjustments",
     description:
       "Reset all Develop edits, including crop/masks, on up to 100 photos (confirm:true); recover through Lightroom History. Opens each in Develop; shared restoration rules apply. Returns reset/skipped/failed; missing/duplicates skipped. Stops near 240 s or cancellation with remaining_ids to retry.",
@@ -1733,7 +1734,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "apply_denoise",
     toolset: "develop",
     title: "Apply denoise",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerDevelop.applyDenoise",
     description:
       "Enable/change AI Denoise through Develop (LrC 15+), not a develop key. Activates each photo; shared restoration rules apply. Activity Center computes in background. Same amount skips; other settings stay. Max 100 photos; stops near 240 s. Returns success, counts, per-photo results, seconds, complete/remaining_ids and progress/retry guidance.",
@@ -1764,7 +1765,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "list_spots",
     toolset: "develop",
     title: "List Remove spots",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerSpots.list",
     description: "List Remove spots (LrC 14.1+): count, 1-based index and complete SDK params including nested fields. Indices shift after deletion. Opens Develop, preserves active tool; shared restoration rules apply.",
     inputSchema: {
@@ -1777,7 +1778,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "update_spot",
     toolset: "develop",
     title: "Update Remove spot opacity",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerSpots.update",
     description: "Set one Heal spot params.Opacity (uppercase, 0..1) by 1-based list_spots index (LrC 14.1+). Preserves other fields/spots; sends complete selected-spot table and reads back. Returns index/changed/SDK params. Opens Remove if needed; restores previous tool and shared Develop state.",
     inputSchema: {
@@ -1795,7 +1796,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "delete_spot",
     toolset: "develop",
     title: "Delete Remove spot",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerSpots.delete",
     description: "Delete Remove spot by 1-based list_spots index (LrC 14.1+, confirm:true). Returns deleted_index, remaining count/spots; later indices shift. Invalid index fails unchanged. Opens Remove if needed; restores previous tool and shared Develop state.",
     inputSchema: {
@@ -1809,7 +1810,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "list_masks",
     toolset: "masks",
     title: "List masks",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerMasks.listMasks",
     description:
       "List masks (Lightroom Classic 11+): id/name/hidden and tools with id/type/subtype/inverted. Range tools include stored luminance/depth min/max/falloffs or color x/y/l/a/b/amount; use these color rankings with create_range_mask. UI-created ranges appear only after Lightroom saves them to the catalog. No masks returns an empty list. Ids remain valid on that photo while masks stay unchanged. Shared Develop restoration rules apply.",
@@ -1826,7 +1827,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_gradient_mask",
     toolset: "masks",
     title: "Create gradient mask",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerGradientMasks.createGradientMask",
     description:
       "Place a linear or radial gradient (Lightroom Classic 15.6 only; shared guarded-write and coordinate rules apply). Linear: full strength at start, fading to zero at end. Radial: center, width, height, clockwise rotation, feather 0 hard to 100 soft, area inside or outside. Omit mask_id for a new optionally named mask; supply it to add a component with mode add (default) or subtract. Intersect is unsupported. New masks start neutral. Returns mask_id, tool_id for update_gradient_mask, shape and stored geometry.",
@@ -1867,7 +1868,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "update_gradient_mask",
     toolset: "masks",
     title: "Update gradient mask",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerGradientMasks.updateGradientMask",
     description:
       "Reshape a gradient by tool_id from list_masks or create_gradient_mask (Lightroom Classic 15.6 only; shared guarded-write and coordinate rules apply). Supply only changed fields: start/end for linear, center/width/height/rotation/feather/area for radial; fields of the other shape are rejected. Preserves tool id, mask id and adjustments.",
@@ -1886,7 +1887,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_brush_mask",
     toolset: "masks",
     title: "Create brush mask",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerBrushMasks.createBrushMask",
     description:
       "Paint strokes into a new optionally named brush mask, or supply mask_id to add a brush component (Lightroom Classic 15.6 only; shared guarded-write and coordinate rules apply). Each nonempty stroke has points; dabs fill consecutive points at most half a radius apart. radius defaults to 0.14; its soft edge fades near 60% (0.05 on a 1000 px photo gives about 60 px width). Lightroom's Size slider depends on Develop zoom; use radius. Per-stroke flow/density default to 1, feather to 100, erase to false; erase removes only earlier paint of that brush. Empty strokes are rejected. New masks start neutral. Use add_brush_strokes for an existing brush. Read-back checks every dab position and flow. Returns mask_id, tool_id, strokes_added and stroke_count.",
@@ -1921,7 +1922,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "add_brush_strokes",
     toolset: "masks",
     title: "Add brush strokes",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerBrushMasks.addBrushStrokes",
     description:
       "Append strokes to a brush by tool_id from list_masks or create_brush_mask (Lightroom Classic 15.6 only; shared guarded-write and coordinate rules apply). Uses create_brush_mask stroke settings and path filling; existing strokes, ids and adjustments stay unchanged. Empty strokes are rejected. Append erase strokes to remove paint, or delete the brush with delete_masks tool_ids and repaint. Returns mask_id, tool_id, strokes_added and stroke_count.",
@@ -1940,7 +1941,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_range_mask",
     toolset: "masks",
     title: "Create range mask",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerRangeMasks.createRangeMask",
     description:
       "Create a luminance, color or depth range (Lightroom Classic 15.6 only; shared guarded-write and coordinate rules apply). Luminance selects min..max (0 black, 1 white), fading over falloff on each side, clipped at 0 and 1. Depth uses device depth (0 nearest, 1 farthest), requires a depth photo such as iPhone Portrait HEIC and refuses the full 0..1 scene. Luminance/depth bands must be at least 0.01 wide; falloff may be 0. Color takes exactly one sample: l, a, b in 0..1 plus x, y for the pin. A second sample point is rejected because Lightroom crashes on it. l, a, b are per-photo Lightroom rankings, not sRGB or computable from RGB: lightness darkest to brightest, green to red, blue to yellow. The same color has different rankings in different photos; develop edits leave them unchanged. Selection follows l, a, b, not the pin. Obtain them through list_masks after clicking Tools > Create New Mask > Color Range in Lightroom, or supply your own ranking (e.g. l 0.9, a 0.95 for brightest reds). Instead of color.sample, copy_sample_from takes mask_id, tool_id and optional photo_id: copies one color sample verbatim, preserving its displayed pin and amount unless color.amount overrides it. Other range types, unknown ids, a tool outside that mask or multiple samples fail unchanged. Cross-photo copies select similarly ranked pixels, which match colors only for identical pixel content; different photos can select different colors. Returns copied_from. amount is >0 to 1 (default 0.5), narrow to broad. Omit mask_id for a new optionally named mask; supply it to add a component with mode add (default) or subtract; intersect is unsupported. invert selects outside the range. New masks start neutral. Returns mask_id, tool_id, type and stored range; verifies a rangeMask with the requested subtype.",
@@ -2050,7 +2051,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "delete_masks",
     toolset: "masks",
     title: "Delete masks",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerMaskDelete.deleteMasks",
     description:
       "Delete mask_ids, tool_ids or all=true on one photo_id (LrC 11+), or give only photo_ids to delete tool-less masks on up to 1000 photos (LrC 14+). Ids come from list_masks; unknown ids fail unchanged, and removing a last component removes its mask. Single-photo deletion opens Develop/Masking, verifies applied/saved deletion and restores the view; remaining ids can change, so list_masks again. Empty-mask deletion preserves module/selection without Develop. Returns deleted mask/tool ids and remaining count, or photos_changed, photos_checked and missing IDs.",
@@ -2086,7 +2087,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_mask_adjustments",
     toolset: "masks",
     title: "Set mask adjustments",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerMaskAdjustments.setMaskAdjustments",
     description:
       "Change any subset of local SDK sliders on a mask_id from list_masks (Lightroom Classic 11+); other sliders stay unchanged. Schema lists slider names/ranges; Lightroom actual ranges win. Unknown mask or invalid value fails before writing. Shared slider read-back, save wait and Develop restoration rules apply. Returns values read back, changed sliders (from/to) and unchanged sliders.",
@@ -2112,7 +2113,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_mask",
     toolset: "masks",
     title: "Get mask",
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     luaHandler: "HandlerMaskRead.getMask",
     description:
       "Read local adjustments, tone curves and Point Color by mask_id from list_masks in one Develop session. kinds defaults to all; only requested kinds are read. Returns adjustments (SDK slider names), curves (main/red/green/blue flat input/output arrays), swatches (Lightroom order, indexed from 1), and per-kind unavailable fields. Unsupported or unreadable kinds appear in errors while supported kinds return; none readable fails. Minimum Lightroom Classic versions: adjustments 11, curves 12.3, Point Color 13.2. Unknown ids fail without reading values. Shared Develop restoration rules apply.",
@@ -2138,7 +2139,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "invert_mask",
     toolset: "masks",
     title: "Invert mask",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerMaskInvert.invertMask",
     description:
       "Invert by mask_id from list_masks (Lightroom Classic 11.4+). in_place flips only one component of a multi-component mask; result lists every tool/inverted flag. copy keeps the source and copies its local sliders onto an inverted duplicate; read-back mismatch removes the copy and fails. Returns mask_id and source_mask_id, with adjustments_copied counting slider writes in the Duplicate and Invert history step. Use returned mask_id: develop writes can regenerate ids. Unknown ids fail unchanged. Shared Develop restoration rules apply.",
@@ -2165,7 +2166,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_mask",
     toolset: "masks",
     title: "Create mask",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerMaskCreate.createMask",
     description:
       "Create Subject, Sky or Background (Lightroom Classic 11+), or People/Landscape masks (15.6; shared guarded-write rules). Returns mask_id and mask or masks per part/category. Existing masks stay unchanged; missing parts remove all new masks. Shared restoration/history rules apply. Detection can leave a \"No sky detected\" modal alert blocking Develop until OK is clicked. People/Landscape computation takes up to 120 s without opening Develop; an \"AI process is running\" alert can need OK. See type, parts, categories and adjustments for limits.",
@@ -2209,7 +2210,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "create_mask_batch",
     toolset: "masks",
     title: "Create mask batch",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerMaskBatch.createMaskBatch",
     description:
       "Create Subject, Sky or Background masks with the same adjustments on up to 200 photos (Lightroom Classic 15.6 only; shared guarded-write rules apply). Opens the first photo in Develop as create_mask does; strips computed data and recomputes on each later photo without opening Develop. Existing masks stay unchanged. Returns results with status created/failed/not_attempted, created boolean, mask_id or reason; counts, missing ids and complete. Nothing found removes the added mask and continues, except on the first photo: a \"No sky detected\" modal alert blocks Develop until OK is clicked in Lightroom, stops the batch and leaves the rest not_attempted; dismiss it and drop that photo before retrying. Stops near 230 s with complete false and remaining_ids to retry. Rejected mask formats fail untouched. Exposure is -4 to 4.",
@@ -2240,7 +2241,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_mask_curves",
     toolset: "masks",
     title: "Set mask curves",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerMaskCurves.setMaskCurves",
     description:
       "Set local tone curves by mask_id from list_masks (Lightroom Classic 12.3+). curves takes any subset of main (RGB), red, green, blue; flat input/output arrays on 0..255, 2..32 integer pairs with strictly increasing inputs from 0 to 255. [0,0,255,255] is straight. Other channels stay unchanged. Shared curve read-back, rollback, save wait and Develop restoration rules apply. Unsupported versions fail naming the minimum version. Returns read-back curves, changed channels (from/to) and unchanged channels.",
@@ -2265,7 +2266,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "edit_mask_point_colors",
     toolset: "masks",
     title: "Edit mask point colors",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerMaskPointColors.editMaskPointColors",
     description:
       "Edit local Point Color swatches by mask_id from list_masks (Lightroom Classic 13.2+). Up to 8 swatches, indexed from 1 as in get_mask swatches. add requires swatch SrcHue (0..6), SrcSat/SrcLum (0..1); duplicate source color fails. Optional shift/scale/range fields and limits are in the schema. update needs index and changed swatch fields; delete needs index; clear removes all swatches. Preserves mask sliders and other/global settings. Read-back mismatch restores a swatch update. Restores previous mask and swatch after Develop. Unsupported versions fail naming the minimum version. Returns action, affected index, changed flag and resulting swatches.",
@@ -2301,7 +2302,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "combine_mask",
     toolset: "masks",
     title: "Combine mask",
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     luaHandler: "HandlerMaskCombine.combineMask",
     description:
       "Add, subtract or intersect a detected Subject, Sky or Background component on a mask (Lightroom Classic 11+). Selects and verifies mask_id from list_masks before changes; unknown ids fail unchanged. Returns new tool_id. add widens, subtract removes, intersect keeps overlap; Lightroom stores intersect as subtracted/inverted, shown inverted true in list_masks. Nothing found fails after about 30 s, keeps existing components and shows a \"No sky detected\" modal alert blocking Develop until OK in Lightroom. Restores prior mask, tool, module, view source and selection; shared detection/history rules apply.",

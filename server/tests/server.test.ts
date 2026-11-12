@@ -447,6 +447,10 @@ describe('createMcpServer', () => {
       pair = await connect({ toolsets: 'all' });
       const { tools } = await pair.client.listTools();
       expect(tools.map((tool) => tool.name).sort()).toEqual(Object.keys(TOOL_CLASSES).sort());
+      const idempotentWrites = new Set([
+        'set_gps', 'set_location', 'set_metadata', 'set_ai_metadata',
+        'set_rating_and_flag', 'set_color_label', 'add_to_collection', 'remove_from_collection',
+      ]);
       for (const tool of tools) {
         const classification = TOOL_CLASSES[tool.name];
         expect({ name: tool.name, title: tool.title }).toEqual({
@@ -455,9 +459,12 @@ describe('createMcpServer', () => {
         });
         expect({ name: tool.name, annotations: tool.annotations }).toEqual({
           name: tool.name,
-          annotations: classification === 'read-only'
-            ? { readOnlyHint: true, openWorldHint: false }
-            : { readOnlyHint: false, destructiveHint: classification === 'destructive', openWorldHint: false },
+          annotations: {
+            readOnlyHint: classification === 'read-only',
+            destructiveHint: classification === 'destructive',
+            idempotentHint: classification === 'read-only' || idempotentWrites.has(tool.name),
+            openWorldHint: false,
+          },
         });
       }
     });
